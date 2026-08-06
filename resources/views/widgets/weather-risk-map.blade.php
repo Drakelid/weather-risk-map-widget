@@ -635,10 +635,12 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         tableOpen: true,
         tableUserSet: false,
         positioned: false,
+        lastBoundsKey: null,
         loading: false,
         palette: null,
         themeObserver: null,
         sizeObserver: null,
+        mapSizeObserver: null,
         wasDark: null
     };
 
@@ -1021,8 +1023,11 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
      */
     function selectWarning(warningId) {
         state.selectedWarning = (state.selectedWarning === warningId) ? null : warningId;
+
+        // Restyle the existing layers rather than rebuilding them: the click
+        // that got us here is still being handled by one of them.
         applyWarningEmphasis();
-        render();
+        render({ rebuildPolygons: false });
     }
 
     function renderWarningDetail() {
@@ -1239,7 +1244,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         if (state.severityFilter > 0) {
             $bar.append(pill(
                 tr('filter_severity', { level: levelMeta(state.severityFilter).label }),
-                function () { state.severityFilter = 0; render(); }
+                function () { state.severityFilter = 0; render({ rebuildPolygons: false }); }
             ));
         }
 
@@ -1257,7 +1262,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             var w = warningById(state.selectedWarning);
             $bar.append(pill(
                 tr('filter_warning', { name: w ? (w.event_name || w.title) : state.selectedWarning }),
-                function () { state.selectedWarning = null; applyWarningEmphasis(); render(); }
+                function () { state.selectedWarning = null; applyWarningEmphasis(); render({ rebuildPolygons: false }); }
             ));
         }
 
@@ -1265,7 +1270,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             var d = deviceById(state.expandedDevice);
             $bar.append(pill(
                 tr('filter_device', { name: d ? d.display_name : state.expandedDevice }),
-                function () { state.expandedDevice = null; render(); }
+                function () { state.expandedDevice = null; render({ rebuildPolygons: false }); }
             ));
         }
 
@@ -1770,17 +1775,35 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         }
     }
 
-    function renderMap() {
-        renderPolygons();
+    function boundsKey() {
+        var b = state.payload && state.payload.bounds;
+        return b ? [b.south, b.west, b.north, b.east].join(',') : '';
+    }
+
+    /**
+     * @param {{rebuildPolygons: boolean, fit: boolean}} options
+     *
+     * Polygons are only rebuilt when something actually changed which warnings
+     * are drawn. Rebuilding on selection would destroy the very layer the user
+     * just clicked, out from under Leaflet's own click handling.
+     */
+    function renderMap(options) {
+        if (options.rebuildPolygons) { renderPolygons(); }
         renderMarkers();
 
-        // Positioning happens once; after that only 'auto' keeps re-fitting, so
-        // a refresh never yanks the map away from a deliberate pan.
         if (! state.positioned) {
             state.positioned = true;
+            state.lastBoundsKey = boundsKey();
             if (! applyInitialView() && state.payload.bounds) { fitDevices(); }
-        } else if (settings.map_mode === 'auto' && state.payload.bounds) {
-            fitDevices();
+        } else if (options.fit && settings.map_mode === 'auto' && state.payload.bounds) {
+            // Auto-fit follows the DEVICES, so it should only move when the
+            // device set moves. Re-fitting on every render made selecting a
+            // warning - or any filter click - snap the map back.
+            var key = boundsKey();
+            if (key !== state.lastBoundsKey) {
+                state.lastBoundsKey = key;
+                fitDevices();
+            }
         }
 
         $root.find('[data-action="toggle-warnings"]').attr('aria-pressed', state.showWarnings ? 'true' : 'false');
@@ -1822,14 +1845,18 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     // -------------------------------------------------------------- render
 
-    function render() {
+    function render(options) {
+        // Safe defaults: correct visuals, no map movement. Only the data load
+        // asks to re-fit.
+        options = $.extend({ rebuildPolygons: true, fit: false }, options || {});
+
         refreshPalette();
         renderSummary();
         renderHazardToggles();
         renderFilters();
         renderWarnings();
         renderTable();
-        renderMap();
+        renderMap(options);
         applyDensity();
 
         var p = state.payload;
@@ -1868,7 +1895,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 }
 
                 state.payload = data;
-                render();
+                render({ rebuildPolygons: true, fit: true });
             },
             error: function (xhr) {
                 state.loading = false;
@@ -1885,7 +1912,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     $root.on('click', '[data-level]', function () {
         var level = parseInt($(this).attr('data-level'), 10);
         state.severityFilter = (state.severityFilter === level) ? 0 : level;   // click again to clear
-        render();
+        render({ rebuildPolygons: false });
     });
 
     $root.on('click', '[data-hazard]', function () {
@@ -2036,11 +2063,30 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     function watchSize() {
         if (! window.ResizeObserver) { return; }
+
         state.sizeObserver = new ResizeObserver(function () {
             applyDensity();
             updateStripOverflow();
         });
         state.sizeObserver.observe($root[0]);
+
+        /*
+         * The map pane is flex:1, so opening the warning detail panel or the
+         * table shrinks it. Leaflet caches its container size and does not
+         * notice, leaving tiles and markers drawn against stale dimensions -
+         * which looks like the map jumping.
+         *
+         * pan:false is important: the default keeps the centre by panning,
+         * which is itself a movement the operator did not ask for.
+         */
+        var pane = $root.find('.wxrisk-map-wrap')[0];
+        if (! pane) { return; }
+
+        state.mapSizeObserver = new ResizeObserver(function () {
+            var map = get_map(mapId);
+            if (map) { map.invalidateSize({ pan: false, debounceMoveend: true }); }
+        });
+        state.mapSizeObserver.observe(pane);
     }
 
     // ------------------------------------------------------------------ boot
@@ -2072,13 +2118,13 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                     .on('mouseleave', function () { var m = get_map(mapId); if (m) { m.scrollWheelZoom.disable(); } })
                     .on('resize', function () {
                         var m = get_map(mapId);
-                        if (m) { m.invalidateSize(); }
+                        if (m) { m.invalidateSize({ pan: false }); }
                         applyDensity();
                         updateStripOverflow();
                     })
                     .on('refresh', function () {
                         var m = get_map(mapId);
-                        if (m) { m.invalidateSize(); }
+                        if (m) { m.invalidateSize({ pan: false }); }
                         load();
                     })
                     .on('destroy', function () {
@@ -2086,6 +2132,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                         // be disconnected or they leak on every dashboard edit.
                         if (state.themeObserver) { state.themeObserver.disconnect(); state.themeObserver = null; }
                         if (state.sizeObserver) { state.sizeObserver.disconnect(); state.sizeObserver = null; }
+                        if (state.mapSizeObserver) { state.mapSizeObserver.disconnect(); state.mapSizeObserver = null; }
                         state.markers = {};
                         state.cluster = null;
                         state.polygonLayer = null;
