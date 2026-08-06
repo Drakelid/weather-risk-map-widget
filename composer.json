@@ -1,0 +1,43 @@
+{
+    "name": "librenms/weather-risk-map-widget",
+    "description": "Weather Risk Map dashboard widget for LibreNMS - correlates device GPS coordinates with forecasts and official severe-weather warnings",
+    "type": "library",
+    "license": "GPL-3.0-or-later",
+    "require": {
+        "php": "^8.2",
+        "ext-json": "*",
+        "illuminate/contracts": "^12.10",
+        "illuminate/support": "^12.10"
+    },
+    "autoload": {
+        "psr-4": {
+            "LibreNMS\\Plugins\\WeatherRiskMap\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "LibreNMS\\Plugins\\WeatherRiskMap\\Tests\\": "tests/"
+        }
+    },
+    "require-dev": {
+        "illuminate/http": "^12.10",
+        "illuminate/translation": "^12.10",
+        "laravel/pint": "^1.18",
+        "phpunit/phpunit": "^11.0"
+    },
+    "scripts": {
+        "test": "phpunit --testsuite unit",
+        "lint": "pint --test"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "LibreNMS\\Plugins\\WeatherRiskMap\\WeatherRiskMapServiceProvider"
+            ]
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}
