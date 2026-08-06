@@ -158,8 +158,9 @@ class WeatherRiskMapBuilder
                         'hazard' => $top->hazard->label(),
                         'detail' => $top->detail,
                         'device' => $device['display_name'],
+                        'device_id' => $device['device_id'],
                         'location' => $device['location'],
-                        'time' => $top->peakTime?->format('H:i'),
+                        'time' => $top->peakTime?->toIso8601String(),
                     ];
                 }
             }
@@ -199,9 +200,9 @@ class WeatherRiskMapBuilder
                 'stale' => $forecastMeta['stale'] ?? false,
                 'oldest_data_minutes' => $forecastMeta['oldest_minutes'] ?? null,
                 'last_success' => $forecastMeta['last_success'] ?? null,
+                'degraded_reason' => $this->degradedReason($forecastDegraded, $warningsDegraded),
                 'cells_fetched' => $forecastMeta['fetched'] ?? 0,
                 'cells_skipped' => $forecastMeta['skipped'] ?? 0,
-                'message' => $this->degradedMessage($forecastDegraded, $warningsDegraded, $forecastMeta),
             ],
         ];
     }
@@ -266,7 +267,7 @@ class WeatherRiskMapBuilder
                 'fetched' => count($forecasts),
                 'skipped' => $skipped,
                 'oldest_minutes' => $oldest,
-                'last_success' => $newest?->format('H:i'),
+                'last_success' => $newest?->toIso8601String(),
                 // Anything older than roughly two refresh cycles is worth
                 // flagging to the operator as potentially out of date.
                 'stale' => $oldest !== null && $oldest > 30,
@@ -323,24 +324,21 @@ class WeatherRiskMapBuilder
         return implode(' | ', array_unique($parts));
     }
 
-    /** @param array<string, mixed> $meta */
-    private function degradedMessage(bool $forecastDegraded, bool $warningsDegraded, array $meta): ?string
+    /**
+     * Which half of the weather data is missing.
+     *
+     * Returned as a token rather than a sentence: the widget composes the
+     * message so timestamps render in the viewer's timezone and the text can
+     * be translated.
+     */
+    private function degradedReason(bool $forecastDegraded, bool $warningsDegraded): ?string
     {
-        if (! $forecastDegraded && ! $warningsDegraded) {
-            return null;
-        }
-
-        $message = 'Weather data temporarily unavailable.';
-
-        if (! empty($meta['last_success'])) {
-            $message .= ' Last successful update: ' . $meta['last_success'] . '.';
-        }
-
-        if (isset($meta['oldest_minutes']) && $meta['oldest_minutes'] !== null) {
-            $message .= ' Showing cached data ' . $meta['oldest_minutes'] . ' minutes old.';
-        }
-
-        return $message;
+        return match (true) {
+            $forecastDegraded && $warningsDegraded => 'both',
+            $forecastDegraded => 'forecast',
+            $warningsDegraded => 'warnings',
+            default => null,
+        };
     }
 
     /** @return array<string, mixed> */
@@ -369,7 +367,7 @@ class WeatherRiskMapBuilder
                 'last_success' => null,
                 'cells_fetched' => 0,
                 'cells_skipped' => 0,
-                'message' => null,
+                'degraded_reason' => null,
                 'empty_reason' => $message,
             ],
         ];

@@ -95,6 +95,42 @@ return [
     'degraded' => 'Weather data temporarily unavailable',
     'cached_notice' => 'Showing cached weather data',
 
+    // Status banner
+    'degraded_forecast' => 'Forecast data temporarily unavailable.',
+    'degraded_warnings' => 'Official warnings temporarily unavailable.',
+    'degraded_both' => 'Weather data temporarily unavailable.',
+    'last_success' => 'Last successful update :time.',
+    'cached_age' => 'Showing cached data :minutes minutes old.',
+    'devices_still_shown' => 'LibreNMS device data is unaffected.',
+    'updated_at' => 'Updated :time',
+    'refreshing' => 'Refreshing...',
+
+    // Filters
+    'filters_active' => 'Filters',
+    'clear_all' => 'Clear all',
+    'filter_severity' => ':level and above',
+    'filter_hazards_only' => ':list only',
+    'filter_hazards_hidden' => ':count hazards hidden',
+    'filter_warning' => 'Warning: :name',
+    'filter_device' => 'Device: :name',
+    'hazards_all' => 'All',
+    'hazards_none' => 'None',
+    'hazards_menu' => 'Hazards',
+
+    // Table
+    'table_heading' => 'Infrastructure at risk',
+    'table_heading_count' => ':shown of :total devices, moderate risk and above',
+    'table_collapse' => 'Collapse the table',
+    'table_expand' => 'Expand the table',
+
+    // Empty states, by cause
+    'empty_severity' => 'No devices reach the selected severity.',
+    'empty_hazards' => 'Every hazard is switched off.',
+    'empty_hazard_filter' => 'No devices at risk from the selected hazards.',
+    'empty_warning' => 'No devices fall inside the selected warning.',
+    'empty_clear' => 'Clear filters',
+    'more_warnings' => ':count more',
+
     'settings' => [
         'general' => 'General',
         'map' => 'Map',

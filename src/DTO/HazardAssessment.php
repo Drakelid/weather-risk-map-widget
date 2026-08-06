@@ -54,8 +54,10 @@ final class HazardAssessment
             'risk_label' => $this->risk->label(),
             'risk_color' => $this->risk->hex(),
             'detail' => $this->detail,
+            // ISO only. A server-formatted "H:i" would be rendered in the
+            // application timezone while the browser formats warning times in
+            // the viewer's, putting two different clocks in one table.
             'peak_time' => $this->peakTime?->toIso8601String(),
-            'peak_time_short' => $this->peakTime?->format('H:i'),
             'peak_value' => $this->peakValue,
             'unit' => $this->unit,
             'official' => $this->official,

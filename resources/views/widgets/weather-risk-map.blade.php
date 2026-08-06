@@ -10,18 +10,22 @@
     LibreNMS compiles Tailwind from its own tree only (resources/css/app.css has
     two @source directives plus the default project scan). This package lives
     outside that tree and is reached through a vendor symlink, so `tw:` classes
-    used here are never generated - arbitrary values such as tw:min-h-[220px]
-    are guaranteed missing, and anything that did work did so only because core
-    happened to use the same utility. Note also that Tailwind v4 wants the
-    prefix first (tw:dark:...), so the `dark:tw:...` form seen in parts of core
-    is dead CSS.
-
-    Everything below is therefore plain, self-contained, .wxrisk-scoped CSS.
+    used here are never generated. Everything below is plain, self-contained,
+    .wxrisk-scoped CSS.
 
     THEMING - LibreNMS toggles class="dark" on <html> (librenms.js
     applySiteStyle), including at runtime for the "device" preference. Colours
     live in custom properties so one definition drives both this stylesheet and
     the JavaScript that paints markers and polygons.
+
+    DENSITY - LibreNMS adds widgets at size_y 3 with cellHeight 100, i.e. about
+    260px of usable body. The full chrome needs roughly twice that, so the root
+    carries is-compact / is-tiny classes driven by the measured height and the
+    layout sheds furniture rather than overflowing.
+
+    TIME - every timestamp arrives as ISO and is formatted in the browser.
+    Server-rendered clock strings would be in the application timezone while
+    the browser renders others in the viewer's, putting two clocks in one view.
 --}}
 @php
     $wid = 'wxrisk-' . $id;
@@ -34,35 +38,49 @@
         <div class="wxrisk-headline">
             <span class="wxrisk-title">{{ __('weather-risk-map::widget.summary_heading') }}</span>
             <span class="wxrisk-window" data-role="window-label"></span>
-            <span class="wxrisk-badge wx-hidden" data-role="degraded"></span>
             <span class="wxrisk-spacer"></span>
-            <span class="wxrisk-highest" data-role="highest"></span>
+            <span class="wxrisk-updated" data-role="updated"></span>
         </div>
 
-        {{-- Counters double as severity filters (spec section 13). --}}
-        <div class="wxrisk-chiprow" data-role="counters"></div>
+        {{-- Degradation is a banner, not a tooltip: a NOC wall display cannot
+             hover, and the reason matters more than the fact. --}}
+        <div class="wxrisk-banner wx-hidden" data-role="banner" role="status" aria-live="polite"></div>
 
-        {{-- Hazard toggles (spec section 11). --}}
-        <div class="wxrisk-chiprow" data-role="hazard-toggles"></div>
+        <div class="wxrisk-chiprow" data-role="counters" role="group"
+             aria-label="{{ __('weather-risk-map::widget.summary_heading') }}"></div>
+
+        <div class="wxrisk-hazards">
+            {{-- Compact layouts collapse the hazard chips behind this button. --}}
+            <button type="button" class="wxrisk-hazbtn" data-role="hazard-menu"
+                    aria-expanded="false">{{ __('weather-risk-map::widget.hazards_menu') }}</button>
+
+            <div class="wxrisk-hazwrap" data-role="hazard-wrap">
+                <div class="wxrisk-chiprow" data-role="hazard-toggles" role="group"
+                     aria-label="{{ __('weather-risk-map::widget.settings.hazards') }}"></div>
+                <div class="wxrisk-hazactions">
+                    <button type="button" class="wxrisk-linkbtn" data-role="hazards-all">{{ __('weather-risk-map::widget.hazards_all') }}</button>
+                    <button type="button" class="wxrisk-linkbtn" data-role="hazards-none">{{ __('weather-risk-map::widget.hazards_none') }}</button>
+                </div>
+            </div>
+        </div>
+
+        {{-- Active-filter bar: four independent filter states compose in ways
+             nothing else in the UI explains. This makes them visible and
+             individually dismissible. --}}
+        <div class="wxrisk-filters wx-hidden" data-role="filters"></div>
     </div>
 
-    {{--
-        Active warnings strip.
-
-        The single biggest usability gain over a bare count: an operator sees
-        WHAT is warned, WHERE, WHEN and HOW MANY devices sit inside it, without
-        hunting for polygons. Clicking a card flies the map to that warning and
-        dims the others.
-    --}}
-    <div class="wxrisk-warnings wx-hidden" data-role="warnings-wrap">
+    {{-- Active warnings strip: what is warned, where, when, and how many
+         devices sit inside it - without hunting for polygons. --}}
+    <div class="wxrisk-warnings" data-role="warnings-wrap">
         <div class="wxrisk-warnings-head">
             <span class="wxrisk-subtitle">{{ __('weather-risk-map::widget.warnings_heading') }}</span>
             <span class="wxrisk-muted-text" data-role="warnings-count"></span>
-            <button type="button" class="wxrisk-linkbtn wx-hidden" data-role="clear-selection">
-                {{ __('weather-risk-map::widget.show_all') }}
-            </button>
+            <span class="wxrisk-muted-text wx-hidden" data-role="warnings-more"></span>
         </div>
-        <div class="wxrisk-strip" data-role="warning-cards"></div>
+        <div class="wxrisk-stripwrap">
+            <div class="wxrisk-strip" data-role="warning-cards"></div>
+        </div>
         <div class="wxrisk-wdetail wx-hidden" data-role="warning-detail"></div>
     </div>
 
@@ -70,15 +88,21 @@
     <div class="wxrisk-map-wrap">
         <div id="{{ $wid }}-map" class="wxrisk-map"></div>
 
-        {{-- Toolbar sits above Leaflet's panes but below its popups. --}}
         <div class="wxrisk-toolbar" data-role="toolbar">
-            <button type="button" data-action="fit-devices" title="{{ __('weather-risk-map::widget.fit_devices') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg></button>
-            <button type="button" data-action="fit-warnings" title="{{ __('weather-risk-map::widget.fit_warnings') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/></svg></button>
-            <button type="button" data-action="toggle-warnings" title="{{ __('weather-risk-map::widget.toggle_warnings') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 7l8-3 8 3v10l-8 3-8-3z"/><path d="M4 11h16M4 15h16"/></svg></button>
-            <button type="button" data-action="toggle-legend" title="{{ __('weather-risk-map::widget.legend') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg></button>
+            <button type="button" data-action="fit-devices"
+                    aria-label="{{ __('weather-risk-map::widget.fit_devices') }}"
+                    title="{{ __('weather-risk-map::widget.fit_devices') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 1v4M12 19v4M1 12h4M19 12h4"/></svg></button>
+            <button type="button" data-action="fit-warnings"
+                    aria-label="{{ __('weather-risk-map::widget.fit_warnings') }}"
+                    title="{{ __('weather-risk-map::widget.fit_warnings') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/></svg></button>
+            <button type="button" data-action="toggle-warnings" aria-pressed="true"
+                    aria-label="{{ __('weather-risk-map::widget.toggle_warnings') }}"
+                    title="{{ __('weather-risk-map::widget.toggle_warnings') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 7l8-3 8 3v10l-8 3-8-3z"/><path d="M4 11h16M4 15h16"/></svg></button>
+            <button type="button" data-action="toggle-legend" aria-pressed="false"
+                    aria-label="{{ __('weather-risk-map::widget.legend') }}"
+                    title="{{ __('weather-risk-map::widget.legend') }}"><svg class="wxrisk-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></svg></button>
         </div>
 
-        {{-- Legend, hidden by default so it never eats map space on a small widget. --}}
         <div class="wxrisk-legend wx-hidden" data-role="legend">
             <div class="wxrisk-legend-title">{{ __('weather-risk-map::widget.legend') }}</div>
             <div data-role="legend-items"></div>
@@ -95,16 +119,25 @@
     </div>
 
     {{-- ---------------------------------------------- infrastructure table --}}
-    <div class="wxrisk-table-wrap">
+    <div class="wxrisk-tablehead">
+        <button type="button" class="wxrisk-tabletoggle" data-role="table-toggle" aria-expanded="true">
+            <svg class="wxrisk-ico wxrisk-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+            <span class="wxrisk-subtitle">{{ __('weather-risk-map::widget.table_heading') }}</span>
+        </button>
+        <span class="wxrisk-muted-text" data-role="table-count"></span>
+    </div>
+
+    <div class="wxrisk-table-wrap" data-role="table-wrap">
         <table class="wxrisk-table">
             <thead>
                 <tr>
-                    <th data-sort="risk">{{ __('weather-risk-map::widget.table.risk') }}</th>
-                    <th data-sort="device">{{ __('weather-risk-map::widget.table.device') }}</th>
-                    <th data-sort="location">{{ __('weather-risk-map::widget.table.location') }}</th>
-                    <th data-sort="hazard">{{ __('weather-risk-map::widget.table.hazard') }}</th>
-                    <th>{{ __('weather-risk-map::widget.table.peak') }}</th>
-                    <th data-sort="time">{{ __('weather-risk-map::widget.table.time') }}</th>
+                    <th data-sort="risk" scope="col" aria-sort="descending">{{ __('weather-risk-map::widget.table.risk') }}<span class="wxrisk-sortmark"></span></th>
+                    <th data-sort="device" scope="col">{{ __('weather-risk-map::widget.table.device') }}<span class="wxrisk-sortmark"></span></th>
+                    <th data-sort="location" scope="col">{{ __('weather-risk-map::widget.table.location') }}<span class="wxrisk-sortmark"></span></th>
+                    <th data-sort="hazard" scope="col">{{ __('weather-risk-map::widget.table.hazard') }}<span class="wxrisk-sortmark"></span></th>
+                    <th scope="col">{{ __('weather-risk-map::widget.table.peak') }}</th>
+                    <th data-sort="time" scope="col">{{ __('weather-risk-map::widget.table.time') }}<span class="wxrisk-sortmark"></span></th>
                 </tr>
             </thead>
             <tbody data-role="rows"></tbody>
@@ -116,20 +149,17 @@
 
 <style>
 /* =====================================================================
- * Weather Risk Map - self-contained styles.
- * Every rule is scoped to .wxrisk-widget so nothing leaks into other
- * widgets, and nothing here depends on Tailwind being compiled.
+ * Weather Risk Map - self-contained styles, scoped to .wxrisk-widget.
  * ===================================================================== */
 
 /* ------------------------------------------------------------ tokens --- */
 /*
  * Dark risk colours are lighter and less saturated than their light
- * counterparts: the #b8860b that reads well on white is muddy on a dimmed
- * dark basemap, and #cc2b2b at 14px marker size is close to unreadable.
+ * counterparts: the #a8760a that reads well on white is muddy on a dimmed
+ * dark basemap, and #c62222 at marker size is close to unreadable.
  *
- * Secondary text uses an explicit --wx-muted rather than opacity. Opacity
- * dimming compounds against a dark background and was the main cause of
- * hard-to-read text in the dark theme.
+ * Secondary text uses an explicit --wx-muted rather than opacity, which
+ * compounds badly against a dark background.
  */
 .wxrisk-widget {
     --wx-normal:   #1f8a45;
@@ -149,6 +179,9 @@
     --wx-head-bg:       #e5e7eb;
     --wx-link:          #1f6fc4;
     --wx-scrim:         rgba(255,255,255,.86);
+    --wx-warn-bg:       #fdf3d4;
+    --wx-warn-fg:       #6b4e00;
+    --wx-warn-border:   #d9a406;
     --wx-tile-filter:   none;
 }
 html.dark .wxrisk-widget {
@@ -169,6 +202,9 @@ html.dark .wxrisk-widget {
     --wx-head-bg:       #3e444c;
     --wx-link:          #8cc2f0;
     --wx-scrim:         rgba(30,34,39,.88);
+    --wx-warn-bg:       #4a3c12;
+    --wx-warn-fg:       #ffe4a3;
+    --wx-warn-border:   #d9a406;
     --wx-tile-filter:   brightness(.72) saturate(.75);
 }
 
@@ -184,26 +220,45 @@ html.dark .wxrisk-widget {
 .wxrisk-widget .wx-hidden { display: none !important; }
 .wxrisk-widget .wxrisk-summary,
 .wxrisk-widget .wxrisk-warnings,
+.wxrisk-widget .wxrisk-tablehead,
 .wxrisk-widget .wxrisk-table-wrap,
 .wxrisk-widget .wxrisk-attribution { flex: 0 0 auto; }
 
 .wxrisk-widget .wxrisk-headline {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
 }
 .wxrisk-widget .wxrisk-spacer { flex: 1 1 auto; }
-.wxrisk-widget .wxrisk-title {
-    font-size: 14px; font-weight: 700; letter-spacing: .02em;
-}
+.wxrisk-widget .wxrisk-title { font-size: 14px; font-weight: 700; letter-spacing: .02em; }
 .wxrisk-widget .wxrisk-subtitle { font-size: 12.5px; font-weight: 600; }
 .wxrisk-widget .wxrisk-window { font-size: 12.5px; color: var(--wx-muted); }
-.wxrisk-widget .wxrisk-highest { font-size: 12.5px; }
+.wxrisk-widget .wxrisk-updated { font-size: 12px; color: var(--wx-muted); white-space: nowrap; }
+.wxrisk-widget .wxrisk-updated.is-stale { color: var(--wx-warn-border); font-weight: 600; }
 .wxrisk-widget .wxrisk-muted-text { font-size: 12px; color: var(--wx-muted); }
 .wxrisk-widget .wx-dim { color: var(--wx-muted); }
-.wxrisk-widget .wxrisk-chiprow {
-    display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px;
+.wxrisk-widget .wxrisk-chiprow { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.wxrisk-widget .wxrisk-attribution { margin-top: 4px; font-size: 11px; color: var(--wx-muted); }
+
+/* Refresh feedback: a hairline bar rather than a blocking overlay. */
+.wxrisk-widget .wxrisk-headline::after {
+    content: ''; display: block; width: 100%; height: 2px; margin-top: 2px;
+    background: linear-gradient(90deg, transparent, var(--wx-link), transparent);
+    background-size: 40% 100%; background-repeat: no-repeat;
+    opacity: 0; transition: opacity .15s;
 }
-.wxrisk-widget .wxrisk-attribution {
-    margin-top: 4px; font-size: 11px; color: var(--wx-muted);
+.wxrisk-widget.is-loading .wxrisk-headline::after {
+    opacity: .9; animation: wxrisk-sweep 1.1s linear infinite;
+}
+@keyframes wxrisk-sweep {
+    from { background-position: -40% 0; }
+    to   { background-position: 140% 0; }
+}
+
+/* ------------------------------------------------------------ banner --- */
+.wxrisk-widget .wxrisk-banner {
+    margin-top: 5px; padding: 5px 9px; border-radius: 3px;
+    font-size: 12.5px; line-height: 1.45;
+    background: var(--wx-warn-bg); color: var(--wx-warn-fg);
+    border-left: 4px solid var(--wx-warn-border);
 }
 
 /* ------------------------------------------------------------- chips --- */
@@ -212,49 +267,96 @@ html.dark .wxrisk-widget {
     padding: 3px 9px; border-radius: 999px;
     font-size: 12.5px; line-height: 1.5; cursor: pointer;
     border: 1px solid transparent; user-select: none;
-    background: var(--wx-surface);
+    background: var(--wx-surface); color: inherit; font-family: inherit;
     transition: background .12s, opacity .12s;
 }
 .wxrisk-widget .wxrisk-chip:hover { background: var(--wx-surface-hover); }
+.wxrisk-widget .wxrisk-chip:focus-visible { outline: 2px solid var(--wx-link); outline-offset: 1px; }
 .wxrisk-widget .wxrisk-chip.is-active { border-color: currentColor; font-weight: 700; }
 .wxrisk-widget .wxrisk-chip.is-off { opacity: .45; text-decoration: line-through; }
 .wxrisk-widget .wxrisk-chip b { font-size: 13px; }
+.wxrisk-widget .wxrisk-chip .wxrisk-count-total { font-weight: 400; color: var(--wx-muted); }
 .wxrisk-widget .wxrisk-dot {
     width: 10px; height: 10px; border-radius: 50%; flex: none;
     display: inline-block; vertical-align: -1px;
 }
 
-/*
- * Inline SVG icons, sized in em so they track whatever text they sit beside.
- * These replaced emoji, which rendered as tofu wherever the glyph was missing
- * and could never match the theme palette.
- */
+/* Inline SVG icons, sized in em so they track adjacent text. Replaced emoji,
+   which rendered as tofu wherever the glyph was missing and could never match
+   the theme palette. */
 .wxrisk-widget .wxrisk-ico,
 .wxrisk-popup .wxrisk-ico,
 .leaflet-tooltip .wxrisk-ico {
     width: 1.05em; height: 1.05em; flex: none;
     display: inline-block; vertical-align: -0.16em;
 }
-.wxrisk-widget .wxrisk-toolbar button .wxrisk-ico {
-    width: 16px; height: 16px; vertical-align: middle;
-}
+.wxrisk-widget .wxrisk-toolbar button .wxrisk-ico { width: 16px; height: 16px; vertical-align: middle; }
 
 .wxrisk-widget .wxrisk-badge {
-    display: inline-block; padding: 2px 7px; border-radius: 3px;
-    font-size: 11px; font-weight: 700;
-    background: #d9a406; color: #1a1a1a;
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+    background: var(--wx-warn-border); color: #1a1a1a;
 }
+/* LibreNMS operational status is a different axis from weather severity, so
+   it gets its own colour rather than sharing the amber "official" badge. */
+.wxrisk-widget .wxrisk-badge.is-down { background: var(--wx-severe); color: #fff; }
+html.dark .wxrisk-widget .wxrisk-badge.is-down { color: #1a1a1a; }
 
 .wxrisk-widget .wxrisk-linkbtn {
     background: none; border: 0; padding: 0;
     font-size: 12px; text-decoration: underline; cursor: pointer;
-    color: var(--wx-link);
+    color: var(--wx-link); font-family: inherit;
 }
+.wxrisk-widget .wxrisk-linkbtn:focus-visible { outline: 2px solid var(--wx-link); outline-offset: 2px; }
+
+/* ------------------------------------------------------- hazard block --- */
+.wxrisk-widget .wxrisk-hazards { position: relative; }
+.wxrisk-widget .wxrisk-hazbtn {
+    display: none; margin-top: 5px;
+    font-size: 12.5px; font-family: inherit; cursor: pointer;
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--wx-surface); color: inherit; border: 1px solid var(--wx-border);
+}
+.wxrisk-widget .wxrisk-hazbtn:hover { background: var(--wx-surface-hover); }
+.wxrisk-widget .wxrisk-hazactions { display: flex; gap: 10px; margin-top: 4px; }
+
+/* ------------------------------------------------------- filter bar ----- */
+.wxrisk-widget .wxrisk-filters {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+    margin-top: 6px; padding: 4px 7px; border-radius: 3px;
+    background: var(--wx-surface); border: 1px dashed var(--wx-border);
+}
+.wxrisk-widget .wxrisk-filters-label {
+    font-size: 11.5px; font-weight: 700; color: var(--wx-muted);
+    text-transform: uppercase; letter-spacing: .04em;
+}
+.wxrisk-widget .wxrisk-fpill {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 2px 4px 2px 8px; border-radius: 999px;
+    font-size: 12px; background: var(--wx-panel); border: 1px solid var(--wx-border);
+    max-width: 240px;
+}
+.wxrisk-widget .wxrisk-fpill span {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wxrisk-widget .wxrisk-fpill button {
+    background: none; border: 0; cursor: pointer; padding: 0 3px;
+    color: var(--wx-muted); font-size: 14px; line-height: 1; font-family: inherit;
+}
+.wxrisk-widget .wxrisk-fpill button:hover { color: var(--wx-severe); }
 
 /* --------------------------------------------------- warnings strip ---- */
 .wxrisk-widget .wxrisk-warnings { margin-top: 8px; }
 .wxrisk-widget .wxrisk-warnings-head {
     display: flex; align-items: center; gap: 8px; margin-bottom: 4px;
+}
+/* Fade on the right edge when more cards exist off-screen; without it a
+   horizontally scrolling strip looks like it simply ends. */
+.wxrisk-widget .wxrisk-stripwrap { position: relative; }
+.wxrisk-widget .wxrisk-stripwrap.has-overflow::after {
+    content: ''; position: absolute; top: 0; right: 0; bottom: 3px; width: 34px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, var(--wx-scrim));
 }
 .wxrisk-widget .wxrisk-strip {
     display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden;
@@ -267,34 +369,20 @@ html.dark .wxrisk-widget {
     background: var(--wx-surface); user-select: none;
     transition: background .12s, opacity .12s, transform .12s;
 }
-.wxrisk-widget .wxrisk-wcard:hover {
-    background: var(--wx-surface-hover); transform: translateY(-1px);
-}
-/* When one card is selected the rest recede, so strip and map agree. */
+.wxrisk-widget .wxrisk-wcard:hover { background: var(--wx-surface-hover); transform: translateY(-1px); }
+.wxrisk-widget .wxrisk-wcard:focus-visible { outline: 2px solid var(--wx-link); outline-offset: 1px; }
 .wxrisk-widget .wxrisk-strip.has-selection .wxrisk-wcard { opacity: .5; }
 .wxrisk-widget .wxrisk-strip.has-selection .wxrisk-wcard.is-selected {
     opacity: 1; box-shadow: 0 0 0 2px currentColor inset;
 }
-/* No map area published: still readable, just not locatable. */
+/* No map area published: readable, just not locatable. */
 .wxrisk-widget .wxrisk-wcard.is-flat { border-left-style: dashed; }
-
-/* Selected warning's full text, shown in place instead of on the map. */
-.wxrisk-widget .wxrisk-wdetail {
-    margin-top: 6px; padding: 8px 10px;
-    background: var(--wx-surface);
-    border: 1px solid var(--wx-border); border-radius: 3px;
-    max-height: 190px; overflow-y: auto;
-}
-.wxrisk-widget .wxrisk-wdetail .wxrisk-popup { max-width: none; min-width: 0; }
-.wxrisk-widget .wxrisk-wdetail .wxrisk-popup .wxrisk-scroll { max-height: none; overflow: visible; }
-.wxrisk-widget .wxrisk-wdetail .wxrisk-kv { max-width: 340px; }
 .wxrisk-widget .wxrisk-wcard-top {
     display: flex; align-items: center; gap: 5px;
     font-size: 13px; font-weight: 600; line-height: 1.4;
 }
 .wxrisk-widget .wxrisk-wcard-name {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: var(--wx-fg);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wx-fg);
 }
 .wxrisk-widget .wxrisk-wcard-sub {
     font-size: 12px; line-height: 1.4; color: var(--wx-muted);
@@ -307,95 +395,101 @@ html.dark .wxrisk-widget {
 .wxrisk-widget .wxrisk-when.is-now { background: var(--wx-severe); }
 html.dark .wxrisk-widget .wxrisk-when.is-now { color: #1a1a1a; }
 .wxrisk-widget .wxrisk-when.is-later { background: #6b7280; }
+.wxrisk-widget .wxrisk-nowarn { font-size: 12.5px; color: var(--wx-muted); padding: 2px 0; }
+
+.wxrisk-widget .wxrisk-wdetail {
+    margin-top: 6px; padding: 8px 10px;
+    background: var(--wx-surface);
+    border: 1px solid var(--wx-border); border-radius: 3px;
+    max-height: 190px; overflow-y: auto;
+}
+.wxrisk-widget .wxrisk-wdetail .wxrisk-popup { max-width: none; min-width: 0; }
+.wxrisk-widget .wxrisk-wdetail .wxrisk-popup .wxrisk-scroll { max-height: none; overflow: visible; }
+.wxrisk-widget .wxrisk-wdetail .wxrisk-kv { max-width: 340px; }
 
 /* --------------------------------------------------------------- map --- */
 .wxrisk-widget .wxrisk-map-wrap {
-    position: relative; flex: 1 1 auto; min-height: 220px;
+    position: relative; flex: 1 1 auto; min-height: 210px;
     margin-top: 8px; border-radius: 4px; overflow: hidden;
     border: 1px solid var(--wx-border);
 }
 .wxrisk-widget .wxrisk-map { position: absolute; inset: 0; }
 .wxrisk-widget .wxrisk-overlay {
     position: absolute; inset: 0; z-index: 500;
-    display: flex; align-items: center; justify-content: center;
-    text-align: center; padding: 0 14px;
-    font-size: 13px; color: var(--wx-fg);
-    background: var(--wx-scrim);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px; text-align: center; padding: 0 14px;
+    font-size: 13px; color: var(--wx-fg); background: var(--wx-scrim);
 }
 
 /* ------------------------------------------------------------- table --- */
+.wxrisk-widget .wxrisk-tablehead {
+    display: flex; align-items: center; gap: 8px; margin-top: 8px;
+}
+.wxrisk-widget .wxrisk-tabletoggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    background: none; border: 0; padding: 0; cursor: pointer;
+    color: inherit; font-family: inherit;
+}
+.wxrisk-widget .wxrisk-tabletoggle:focus-visible { outline: 2px solid var(--wx-link); outline-offset: 2px; }
+.wxrisk-widget .wxrisk-caret { transition: transform .15s; }
+.wxrisk-widget .wxrisk-tabletoggle[aria-expanded="false"] .wxrisk-caret { transform: rotate(-90deg); }
+
 .wxrisk-widget .wxrisk-table-wrap {
-    margin-top: 8px; max-height: 34%; overflow-y: auto;
+    margin-top: 4px; max-height: 34%; overflow-y: auto;
     border: 1px solid var(--wx-border); border-radius: 4px;
 }
 .wxrisk-widget .wxrisk-table { width: 100%; font-size: 12.5px; border-collapse: collapse; }
 .wxrisk-widget .wxrisk-table thead th {
     position: sticky; top: 0; z-index: 2;
     background: var(--wx-head-bg); color: var(--wx-fg);
-    font-weight: 700; white-space: nowrap; text-align: left;
-    padding: 5px 8px;
+    font-weight: 700; white-space: nowrap; text-align: left; padding: 5px 8px;
 }
 .wxrisk-widget .wxrisk-table th[data-sort] { cursor: pointer; }
-.wxrisk-widget .wxrisk-table tbody tr {
-    cursor: pointer; border-top: 1px solid var(--wx-border);
-}
+.wxrisk-widget .wxrisk-sortmark { display: inline-block; width: 0; opacity: 0; margin-left: 3px; }
+.wxrisk-widget .wxrisk-table th.is-sorted .wxrisk-sortmark { width: auto; opacity: .8; }
+.wxrisk-widget .wxrisk-table tbody tr { cursor: pointer; border-top: 1px solid var(--wx-border); }
 .wxrisk-widget .wxrisk-table tbody tr:hover { background: var(--wx-surface); }
+.wxrisk-widget .wxrisk-table tbody tr:focus-visible { outline: 2px solid var(--wx-link); outline-offset: -2px; }
 .wxrisk-widget .wxrisk-table td { padding: 4px 8px; vertical-align: top; }
 .wxrisk-widget .wxrisk-table .wxrisk-empty { color: var(--wx-muted); padding: 8px; }
+.wxrisk-widget .wxrisk-empty .wxrisk-linkbtn { margin-left: 8px; }
+/* Risk is never colour-only: the level name rides with the swatch so the
+   column survives a colour-vision deficiency and greyscale printing. */
+.wxrisk-widget .wxrisk-risklabel { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 
-/* Expanded weather detail, shown in place of moving the map. */
 .wxrisk-widget .wxrisk-detailrow > td {
-    background: var(--wx-surface);
-    padding: 8px 12px;
-    cursor: default;
-    border-top: 0;
+    background: var(--wx-surface); padding: 8px 12px; cursor: default; border-top: 0;
 }
-.wxrisk-widget .wxrisk-detailrow .wxrisk-popup {
-    max-width: none; min-width: 0;
-}
+.wxrisk-widget .wxrisk-detailrow .wxrisk-popup { max-width: none; min-width: 0; }
 .wxrisk-widget .wxrisk-detailrow .wxrisk-popup .wxrisk-scroll { max-height: none; }
-/* The row already names the device; the popup heading would just repeat it. */
 .wxrisk-widget .wxrisk-detailrow .wxrisk-popup h4 { font-size: 13.5px; }
 .wxrisk-widget .wxrisk-detailrow .wxrisk-kv { max-width: 320px; }
 
-/* Explicit "centre the map here" control. */
 .wxrisk-widget .wxrisk-locate {
     background: none; border: 0; padding: 0 2px; margin-left: 3px;
     color: var(--wx-muted); cursor: pointer; vertical-align: -2px;
     opacity: 0; transition: opacity .12s, color .12s;
 }
-.wxrisk-widget .wxrisk-table tbody tr:hover .wxrisk-locate { opacity: 1; }
+.wxrisk-widget .wxrisk-table tbody tr:hover .wxrisk-locate,
+.wxrisk-widget .wxrisk-locate:focus-visible { opacity: 1; }
 .wxrisk-widget .wxrisk-locate:hover { color: var(--wx-link); }
-.wxrisk-widget .wxrisk-locate:focus { opacity: 1; outline: 1px dotted currentColor; }
 .wxrisk-widget .wxrisk-locate .wxrisk-ico { width: 13px; height: 13px; }
 
 /* ----------------------------------------------------------- markers --- */
-/* Weather risk is the fill; LibreNMS down state is the border. */
 .wxrisk-marker { border-radius: 50%; border: 2px solid rgba(255,255,255,.9); box-sizing: border-box; }
 html.dark .wxrisk-marker { border-color: rgba(255,255,255,.55); }
 .wxrisk-marker.is-down { border-color: #111; border-width: 3px; border-style: double; }
 html.dark .wxrisk-marker.is-down { border-color: #000; }
 .wxrisk-marker.is-disabled { opacity: .45; }
-/* Severe and above get a halo so they are findable on a NOC wall. */
 .wxrisk-marker.is-severe { box-shadow: 0 0 0 3px color-mix(in srgb, var(--wx-severe) 40%, transparent), 0 0 6px rgba(0,0,0,.5); }
 .wxrisk-marker.is-extreme { box-shadow: 0 0 0 3px color-mix(in srgb, var(--wx-extreme) 45%, transparent), 0 0 6px rgba(0,0,0,.5); }
-/* Devices inside the selected warning. */
 .wxrisk-marker.is-highlit { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #111; }
-
-/*
- * The explicitly selected device.
- *
- * Since selecting no longer moves the map, the marker has to be findable
- * without it. A pulsing ring reads at a glance across a wall display, where a
- * static colour change of a 14px dot does not.
- */
+/* Selecting no longer moves the map, so the marker must be findable in place. */
 .wxrisk-marker.is-selected {
     box-shadow: 0 0 0 3px #fff, 0 0 0 6px #111;
     animation: wxrisk-pulse 1.4s ease-out infinite;
 }
 html.dark .wxrisk-marker.is-selected { box-shadow: 0 0 0 3px #111, 0 0 0 6px #fff; }
-
-/* A selection hidden inside a cluster: the cluster pulses in its place. */
 .wxrisk-cluster.is-selected { animation: wxrisk-pulse 1.4s ease-out infinite; }
 
 @keyframes wxrisk-pulse {
@@ -403,19 +497,16 @@ html.dark .wxrisk-marker.is-selected { box-shadow: 0 0 0 3px #111, 0 0 0 6px #ff
     70%  { outline: 9px solid rgba(255,255,255,0); outline-offset: 2px; }
     100% { outline: 0 solid rgba(255,255,255,0); outline-offset: 0; }
 }
-
-/* Pulsing outline around the selected warning area. */
 .wxrisk-map .wxrisk-halo { animation: wxrisk-halo-pulse 1.8s ease-in-out infinite; }
 @keyframes wxrisk-halo-pulse {
     0%, 100% { stroke-opacity: .15; }
     50%      { stroke-opacity: .55; }
 }
-
-/* Respect a reduced-motion preference; the static ring still identifies it. */
 @media (prefers-reduced-motion: reduce) {
     .wxrisk-marker.is-selected,
     .wxrisk-cluster.is-selected,
-    .wxrisk-map .wxrisk-halo { animation: none; }
+    .wxrisk-map .wxrisk-halo,
+    .wxrisk-widget.is-loading .wxrisk-headline::after { animation: none; }
     .wxrisk-map .wxrisk-halo { stroke-opacity: .45; }
 }
 
@@ -435,11 +526,11 @@ html.dark .wxrisk-cluster { color: #14171a; }
     width: 28px; height: 28px; line-height: 1; padding: 0;
     font-size: 14px; cursor: pointer; border-radius: 3px;
     background: var(--wx-panel); color: var(--wx-panel-fg);
-    border: 1px solid var(--wx-border);
-    box-shadow: 0 1px 3px rgba(0,0,0,.35);
+    border: 1px solid var(--wx-border); box-shadow: 0 1px 3px rgba(0,0,0,.35);
 }
 .wxrisk-widget .wxrisk-toolbar button:hover { background: var(--wx-surface-hover); }
-.wxrisk-widget .wxrisk-toolbar button.is-off { opacity: .5; }
+.wxrisk-widget .wxrisk-toolbar button:focus-visible { outline: 2px solid var(--wx-link); outline-offset: 1px; }
+.wxrisk-widget .wxrisk-toolbar button[aria-pressed="false"] { opacity: .5; }
 
 .wxrisk-widget .wxrisk-legend {
     position: absolute; left: 8px; bottom: 8px; z-index: 450;
@@ -450,12 +541,8 @@ html.dark .wxrisk-cluster { color: #14171a; }
 }
 .wxrisk-widget .wxrisk-legend-title { font-weight: 700; margin-bottom: 3px; font-size: 12.5px; }
 .wxrisk-widget .wxrisk-legend-row { display: flex; align-items: center; gap: 6px; }
-.wxrisk-widget .wxrisk-legend-swatch {
-    width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none;
-}
-.wxrisk-widget .wxrisk-legend-hint {
-    margin-top: 5px; font-size: 11px; line-height: 1.45; color: var(--wx-muted);
-}
+.wxrisk-widget .wxrisk-legend-swatch { width: 12px; height: 12px; border-radius: 50%; display: inline-block; flex: none; }
+.wxrisk-widget .wxrisk-legend-hint { margin-top: 5px; font-size: 11px; line-height: 1.45; color: var(--wx-muted); }
 
 /* ----------------------------------------------------- leaflet chrome -- */
 html.dark .wxrisk-map .leaflet-popup-content-wrapper,
@@ -467,15 +554,10 @@ html.dark .wxrisk-map .leaflet-control-layers {
     background: #262b31; color: #e8eaed; border-color: #14171a;
 }
 html.dark .wxrisk-map .leaflet-bar a:hover { background: #3a4048; }
-html.dark .wxrisk-map .leaflet-control-attribution {
-    background: rgba(20,23,26,.85); color: #c3c9d1;
-}
+html.dark .wxrisk-map .leaflet-control-attribution { background: rgba(20,23,26,.85); color: #c3c9d1; }
 html.dark .wxrisk-map .leaflet-control-attribution a { color: #8cc2f0; }
-/* Tiles are bright; dimming keeps markers and polygons readable without a
-   paid dark basemap. Light mode resolves the token to `none`. */
 .wxrisk-map .leaflet-tile-pane { filter: var(--wx-tile-filter); }
 
-/* Hover label on a warning area, so its identity reads without a click. */
 .wxrisk-map .leaflet-tooltip.wxrisk-wtip {
     font-size: 12.5px; font-weight: 600; padding: 3px 7px;
     background: var(--wx-panel); color: var(--wx-panel-fg);
@@ -488,12 +570,33 @@ html.dark .wxrisk-map .leaflet-control-attribution a { color: #8cc2f0; }
 .wxrisk-popup { font-size: 13px; line-height: 1.5; min-width: 220px; max-width: 300px; }
 .wxrisk-popup h4 { margin: 0 0 5px; font-size: 14px; font-weight: 700; }
 .wxrisk-popup .wxrisk-kv { display: flex; justify-content: space-between; gap: 12px; }
-.wxrisk-popup .wxrisk-sec {
-    margin-top: 7px; padding-top: 5px; border-top: 1px solid rgba(128,128,128,.4);
-}
+.wxrisk-popup .wxrisk-sec { margin-top: 7px; padding-top: 5px; border-top: 1px solid rgba(128,128,128,.4); }
 .wxrisk-popup .wxrisk-muted { color: var(--wx-muted); }
 html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 .wxrisk-popup .wxrisk-scroll { max-height: 170px; overflow-y: auto; }
+
+/* ===================================================================== */
+/* DENSITY                                                               */
+/* A widget added at the LibreNMS default size has ~260px of body. Rather */
+/* than overflow, shed furniture as height shrinks.                       */
+/* ===================================================================== */
+.wxrisk-widget.is-compact .wxrisk-hazbtn { display: inline-block; }
+.wxrisk-widget.is-compact .wxrisk-hazwrap {
+    display: none;
+    position: absolute; z-index: 600; top: 100%; left: 0; margin-top: 4px;
+    padding: 8px; border-radius: 4px; max-width: 300px;
+    background: var(--wx-panel); color: var(--wx-panel-fg);
+    border: 1px solid var(--wx-border); box-shadow: 0 2px 10px rgba(0,0,0,.35);
+}
+.wxrisk-widget.is-compact .wxrisk-hazards.is-open .wxrisk-hazwrap { display: block; }
+.wxrisk-widget.is-compact .wxrisk-map-wrap { min-height: 130px; }
+.wxrisk-widget.is-compact .wxrisk-wdetail { max-height: 120px; }
+.wxrisk-widget.is-compact .wxrisk-attribution { display: none; }
+
+.wxrisk-widget.is-tiny .wxrisk-warnings-head { margin-bottom: 2px; }
+.wxrisk-widget.is-tiny .wxrisk-wcard-sub { display: none; }
+.wxrisk-widget.is-tiny .wxrisk-map-wrap { min-height: 90px; margin-top: 5px; }
+.wxrisk-widget.is-tiny .wxrisk-table-wrap { max-height: 46%; }
 </style>
 
 <script type="application/javascript">
@@ -526,19 +629,22 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         polygonLayer: null,
         haloLayer: null,
         selectedWarning: null,
+        expandedDevice: null,
         showWarnings: settings.show_warnings !== false,
         showLegend: false,
+        tableOpen: true,
+        tableUserSet: false,
         positioned: false,
-        expandedDevice: null,
         loading: false,
         palette: null,
         themeObserver: null,
+        sizeObserver: null,
         wasDark: null
     };
 
-    // `fallback` is only used if the stylesheet has not applied yet; the live
-    // colour always comes from the CSS custom properties, so light and dark
-    // are defined in exactly one place.
+    // `fallback` is only used before the stylesheet applies; the live colour
+    // always comes from the CSS custom properties, so light and dark are
+    // defined in exactly one place.
     var LEVELS = [
         { key: 'extreme',  value: 5, fallback: '#7326e8' },
         { key: 'severe',   value: 4, fallback: '#c62222' },
@@ -548,26 +654,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         { key: 'normal',   value: 0, fallback: '#1f8a45' }
     ];
 
-    /**
-     * Resolve the risk palette from CSS for the theme currently in force.
-     *
-     * Read once per render rather than per marker: getComputedStyle() forces
-     * style resolution, and a 1000-device map would otherwise call it
-     * thousands of times.
-     */
-    function refreshPalette() {
-        var computed = window.getComputedStyle($root[0]);
-        state.palette = {};
-
-        LEVELS.forEach(function (level) {
-            var value = computed.getPropertyValue('--wx-' + level.key);
-            state.palette[level.key] = (value && value.trim()) || level.fallback;
-        });
-    }
-
-    function isDark() {
-        return document.documentElement.classList.contains('dark');
-    }
+    // ------------------------------------------------------------- helpers
 
     /** Escape untrusted strings before they reach innerHTML. */
     function esc(value) {
@@ -590,24 +677,76 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         return node;
     }
 
+    /** Laravel-style :placeholder substitution. */
+    function tr(path, replacements, fallback) {
+        var text = String(t(path, fallback !== undefined ? fallback : path));
+        Object.keys(replacements || {}).forEach(function (key) {
+            text = text.split(':' + key).join(replacements[key]);
+        });
+        return text;
+    }
 
     /*
-     * Inline SVG rather than emoji.
-     *
-     * The previous glyphs rendered as tofu on common setups: U+2316 and U+25A8
-     * are absent from many symbol fonts, and the coloured circles U+1F7E0-1F7E3
-     * are Emoji 12.0 (2019). Several hazard emoji (U+1F327 cloud-with-rain,
-     * U+1F321 thermometer) also default to *text* presentation and render
-     * monochrome or blank without a variation selector.
-     *
-     * SVG also inherits currentColor, so risk indicators finally match the
+     * All times are formatted here, from ISO. The server deliberately sends no
+     * pre-rendered clock strings: those would be in the application timezone
+     * while these are in the viewer's, which put two different clocks in the
+     * same table.
+     */
+    function fmtTime(iso) {
+        if (! iso) { return null; }
+        var d = new Date(iso);
+        return isNaN(d.getTime()) ? null : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function fmtDateTime(iso) {
+        if (! iso) { return null; }
+        var d = new Date(iso);
+        return isNaN(d.getTime()) ? null : d.toLocaleString();
+    }
+
+    function fmtPeriod(fromIso, toIso) {
+        var a = fmtTime(fromIso);
+        var b = fmtTime(toIso);
+        if (! a && ! b) { return null; }
+        return (a || '?') + '-' + (b || '?');
+    }
+
+    function refreshPalette() {
+        var computed = window.getComputedStyle($root[0]);
+        state.palette = {};
+        LEVELS.forEach(function (level) {
+            var value = computed.getPropertyValue('--wx-' + level.key);
+            state.palette[level.key] = (value && value.trim()) || level.fallback;
+        });
+    }
+
+    function isDark() {
+        return document.documentElement.classList.contains('dark');
+    }
+
+    function levelMeta(value) {
+        var base = LEVELS[LEVELS.length - 1];
+        for (var i = 0; i < LEVELS.length; i++) {
+            if (LEVELS[i].value === value) { base = LEVELS[i]; break; }
+        }
+        return {
+            key: base.key,
+            value: base.value,
+            label: t('levels.' + base.key, base.key),
+            color: (state.palette && state.palette[base.key]) || base.fallback
+        };
+    }
+
+    /*
+     * Inline SVG rather than emoji: the coloured-circle emoji are Emoji 12.0
+     * and several hazard emoji default to text presentation, both of which
+     * render as tofu. SVG also inherits currentColor, so indicators match the
      * theme palette - emoji have fixed colours that never did.
      */
     function svgIcon(inner, filled) {
         var paint = filled
             ? 'fill="currentColor" stroke="none"'
             : 'fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
-
         return '<svg class="wxrisk-ico" viewBox="0 0 24 24" ' + paint + ' aria-hidden="true">' + inner + '</svg>';
     }
 
@@ -632,27 +771,14 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         return svgIcon(HAZARD_PATHS[key], key === 'lightning');
     }
 
-    /** Risk indicator: a themed CSS dot, replacing the coloured-circle emoji. */
     function riskDot(meta, px) {
         var size = px ? ';width:' + px + 'px;height:' + px + 'px' : '';
         return '<span class="wxrisk-dot" style="background:' + meta.color + size + '"></span>';
     }
 
-    /**
-     * Level descriptor with its colour resolved for the current theme.
-     * Returns a fresh object so a stale colour can never be cached by a caller.
-     */
-    function levelMeta(value) {
-        var base = LEVELS[LEVELS.length - 1];
-        for (var i = 0; i < LEVELS.length; i++) {
-            if (LEVELS[i].value === value) { base = LEVELS[i]; break; }
-        }
-
-        return {
-            key: base.key,
-            value: base.value,
-            color: (state.palette && state.palette[base.key]) || base.fallback
-        };
+    /** Risk swatch WITH its name: colour is never the only carrier. */
+    function riskLabel(meta) {
+        return '<span class="wxrisk-risklabel">' + riskDot(meta, 11) + esc(meta.label) + '</span>';
     }
 
     function overlay(text) {
@@ -661,15 +787,83 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         $o.removeClass('wx-hidden').find('[data-role="overlay-text"]').text(text);
     }
 
-    function hhmm(iso) {
-        if (! iso) { return null; }
-        var d = new Date(iso);
-        return isNaN(d.getTime()) ? null : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // -------------------------------------------------------------- filters
+
+    function activeHazards(device) {
+        return (device.hazards || []).filter(function (h) {
+            return state.hazardFilter[h.hazard] !== false;
+        });
+    }
+
+    /**
+     * Risk recomputed against the hazards the operator is actually watching.
+     *
+     * The server scores every hazard enabled in the widget settings; switching
+     * one off in the UI must lower a device whose risk that hazard was driving,
+     * otherwise the counters, markers and table disagree with each other. The
+     * two-severe escalation mirrors WeatherRiskService::overallRisk().
+     */
+    function effectiveRisk(device) {
+        var hazards = activeHazards(device);
+        if (! hazards.length) { return 0; }
+
+        var worst = 0;
+        var severeCount = 0;
+
+        hazards.forEach(function (h) {
+            worst = Math.max(worst, h.risk);
+            if (h.risk >= 4) { severeCount++; }
+        });
+
+        return severeCount >= 2 ? 5 : worst;
+    }
+
+    function enabledHazardKeys() {
+        var enabled = (state.payload && state.payload.settings && state.payload.settings.hazards)
+                      || settings.hazards || {};
+        return Object.keys(enabled).filter(function (k) { return enabled[k]; });
+    }
+
+    function hiddenHazardKeys() {
+        return enabledHazardKeys().filter(function (k) { return state.hazardFilter[k] === false; });
+    }
+
+    function hasAnyFilter() {
+        return state.severityFilter > 0
+            || hiddenHazardKeys().length > 0
+            || state.selectedWarning !== null
+            || state.expandedDevice !== null;
+    }
+
+    function clearAllFilters() {
+        state.severityFilter = 0;
+        state.hazardFilter = {};
+        state.selectedWarning = null;
+        state.expandedDevice = null;
+        applyWarningEmphasis();
+        render();
+    }
+
+    /** Devices passing the hazard filter, before severity is applied. */
+    function hazardFilteredDevices() {
+        if (! state.payload) { return []; }
+        return state.payload.devices.filter(function (d) {
+            return effectiveRisk(d) === 0 ? true : activeHazards(d).length > 0;
+        });
+    }
+
+    /** Devices actually drawn: hazard filter plus the severity floor. */
+    function visibleDevices() {
+        return hazardFilteredDevices().filter(function (device) {
+            var risk = effectiveRisk(device);
+            if (risk < state.severityFilter) { return false; }
+            if (risk === 0) { return state.severityFilter === 0; }
+            return true;
+        });
     }
 
     // ------------------------------------------------------------- warnings
 
-    /** Warnings the user has not filtered out by hazard. */
     function visibleWarnings() {
         if (! state.payload) { return []; }
         return (state.payload.warnings || []).filter(function (w) {
@@ -677,7 +871,14 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         });
     }
 
-    /** How many currently-shown devices sit inside this warning. */
+    function warningById(id) {
+        var found = null;
+        (state.payload ? state.payload.warnings : []).forEach(function (w) {
+            if (w.id === id) { found = w; }
+        });
+        return found;
+    }
+
     function affectedDeviceIds(warningId) {
         if (! state.payload) { return []; }
         return state.payload.devices.filter(function (d) {
@@ -696,16 +897,20 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     function renderWarnings() {
         var warnings = visibleWarnings();
-        var $wrap = $root.find('[data-role="warnings-wrap"]');
         var $strip = $root.find('[data-role="warning-cards"]').empty();
+        var $count = $root.find('[data-role="warnings-count"]');
 
         if (! warnings.length) {
-            $wrap.addClass('wx-hidden');
+            // An empty strip would read as "broken"; say it plainly instead.
+            $count.text('');
+            $strip.append($('<div/>', { 'class': 'wxrisk-nowarn', text: t('no_warnings') }));
+            $root.find('[data-role="warnings-more"]').addClass('wx-hidden');
+            $root.find('.wxrisk-stripwrap').removeClass('has-overflow');
+            renderWarningDetail();
             return;
         }
-        $wrap.removeClass('wx-hidden');
 
-        // Worst and soonest first - what a NOC needs to see without scrolling.
+        // Worst and soonest first: what a NOC needs without scrolling.
         warnings = warnings.slice().sort(function (a, b) {
             if (b.risk !== a.risk) { return b.risk - a.risk; }
             var an = isActiveNow(a) ? 0 : 1, bn = isActiveNow(b) ? 0 : 1;
@@ -713,7 +918,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             return String(a.onset || '').localeCompare(String(b.onset || ''));
         });
 
-        $root.find('[data-role="warnings-count"]').text('(' + warnings.length + ')');
+        $count.text('(' + warnings.length + ')');
 
         warnings.forEach(function (warning) {
             var meta = levelMeta(warning.risk);
@@ -722,29 +927,30 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             var now = isActiveNow(warning);
 
             var affectedLabel = affected === 0
-                ? t('no_devices_affected', 'no devices')
-                : (affected === 1
-                    ? t('one_device_affected', '1 device')
-                    : String(t('devices_affected', ':count devices')).replace(':count', affected));
+                ? t('no_devices_affected')
+                : (affected === 1 ? t('one_device_affected') : tr('devices_affected', { count: affected }));
 
-            var period = warning.period || '';
-            var sub = [warning.area, period, affectedLabel].filter(Boolean).join(' · ');
+            var sub = [warning.area, fmtPeriod(warning.onset, warning.expires), affectedLabel]
+                        .filter(Boolean).join(' · ');
+
+            var selected = state.selectedWarning === warning.id;
 
             var $card = $('<div/>', {
-                'class': 'wxrisk-wcard' + (hasGeometry ? '' : ' is-flat')
-                         + (state.selectedWarning === warning.id ? ' is-selected' : ''),
+                'class': 'wxrisk-wcard' + (hasGeometry ? '' : ' is-flat') + (selected ? ' is-selected' : ''),
                 'style': 'color:' + meta.color,
                 'data-warning': warning.id,
+                'role': 'button',
+                'tabindex': 0,
+                'aria-pressed': selected ? 'true' : 'false',
                 'title': hasGeometry ? '' : t('no_geometry')
             });
 
             $card.append(
                 $('<div/>', { 'class': 'wxrisk-wcard-top' }).append(
                     $('<span/>', { 'class': 'wxrisk-when ' + (now ? 'is-now' : 'is-later'),
-                                   text: now ? t('active_now', 'NOW') : t('upcoming', 'Later') }),
+                                   text: now ? t('active_now') : t('upcoming') }),
                     $('<span/>', { html: hazardSvg(warning.hazard) }),
-                    $('<span/>', { 'class': 'wxrisk-wcard-name',
-                                   text: warning.event_name || warning.title })
+                    $('<span/>', { 'class': 'wxrisk-wcard-name', text: warning.event_name || warning.title })
                 )
             );
             $card.append($('<div/>', { 'class': 'wxrisk-wcard-sub', text: sub }));
@@ -753,12 +959,37 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         });
 
         $strip.toggleClass('has-selection', state.selectedWarning !== null);
-        $root.find('[data-role="clear-selection"]').toggleClass('wx-hidden', state.selectedWarning === null);
-
         renderWarningDetail();
+        updateStripOverflow();
     }
 
-    /** Bounds covering every polygon of one warning, or of all warnings. */
+    /** Fade + count when cards continue past the right edge. */
+    function updateStripOverflow() {
+        var strip = $root.find('[data-role="warning-cards"]')[0];
+        var $wrap = $root.find('.wxrisk-stripwrap');
+        var $more = $root.find('[data-role="warnings-more"]');
+        if (! strip) { return; }
+
+        var overflowing = strip.scrollWidth > strip.clientWidth + 4;
+        var atEnd = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 4;
+
+        $wrap.toggleClass('has-overflow', overflowing && ! atEnd);
+
+        if (! overflowing) {
+            $more.addClass('wx-hidden');
+            return;
+        }
+
+        // Rough count of cards not fully in view - enough to signal "there is
+        // more here" without pretending to be exact.
+        var cards = strip.children.length;
+        var perView = Math.max(1, Math.round(strip.clientWidth / 190));
+        var hidden = Math.max(0, cards - perView);
+
+        $more.toggleClass('wx-hidden', hidden === 0 || atEnd)
+             .text(tr('more_warnings', { count: hidden }));
+    }
+
     function warningBounds(warningId) {
         var bounds = null;
 
@@ -768,9 +999,9 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 var b = layer.getBounds();
                 if (! b || ! b.isValid()) { return; }
 
-                // Clone rather than seed from b directly: L.latLngBounds()
-                // returns the SAME object when handed a bounds, so extending it
-                // would mutate the polygon's own internal _bounds.
+                // Clone rather than seed from b: L.latLngBounds() returns the
+                // SAME object when handed a bounds, so extending it would
+                // mutate the polygon's own internal _bounds.
                 if (! bounds) {
                     bounds = L.latLngBounds(b.getSouthWest(), b.getNorthEast());
                 } else {
@@ -783,32 +1014,17 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     }
 
     /**
-     * Select a warning to read it.
-     *
-     * Deliberately does NOT move the map. Selecting a warning to find out what
-     * it says should not cost the operator the view they had set up; the map
-     * only changes emphasis, and the toolbar's zoom-to-warnings button remains
-     * for when moving there is actually what you want.
+     * Select a warning to read it. Deliberately does NOT move the map: finding
+     * out what a warning says should not cost the view you had set up. The map
+     * changes emphasis only; the toolbar and the detail panel's button remain
+     * for when going there is actually what you want.
      */
     function selectWarning(warningId) {
-        // Clicking the selected card again clears the selection.
         state.selectedWarning = (state.selectedWarning === warningId) ? null : warningId;
-
         applyWarningEmphasis();
-        renderWarnings();
-        renderMarkers();
+        render();
     }
 
-    /** Find a warning in the current payload by id. */
-    function warningById(id) {
-        var found = null;
-        (state.payload ? state.payload.warnings : []).forEach(function (w) {
-            if (w.id === id) { found = w; }
-        });
-        return found;
-    }
-
-    /** Full text of the selected warning, shown in place rather than on the map. */
     function renderWarningDetail() {
         var $panel = $root.find('[data-role="warning-detail"]');
         var warning = state.selectedWarning ? warningById(state.selectedWarning) : null;
@@ -820,24 +1036,20 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         var locatable = (warning.polygons || []).length > 0;
 
-        // Explicit, never automatic: the halo says where it is, this goes there.
         $panel.removeClass('wx-hidden').html(
             warningPopup(warning)
             + (locatable
-                ? '<button type="button" class="wxrisk-linkbtn wxrisk-showon" data-locate-warning="'
+                ? '<button type="button" class="wxrisk-linkbtn" data-locate-warning="'
                   + esc(warning.id) + '">' + esc(t('show_on_map')) + '</button>'
                 : '<span class="wxrisk-muted">' + esc(t('no_geometry')) + '</span>')
         );
     }
 
-
     /**
-     * Draw a thick pulsing outline around the selected warning.
-     *
-     * Dimming the others tells you which one is selected but not where it is;
-     * a halo makes it findable at a glance. It is a separate non-interactive
-     * layer rather than a restyle of the polygon itself, so clicks, tooltips
-     * and the crisp boundary stroke are all unaffected.
+     * Thick pulsing outline around the selected warning. Dimming the others
+     * says which one is selected but not where it is. A separate
+     * non-interactive layer, so clicks, tooltips and the crisp boundary stroke
+     * are all unaffected.
      */
     function updateWarningHalo() {
         var map = get_map(mapId);
@@ -858,21 +1070,13 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         var halos = layers.map(function (layer) {
             return L.polygon(layer.getLatLngs(), {
-                color: colour,
-                weight: 10,
-                opacity: 0.35,
-                fill: false,
-                interactive: false,      // never steals a click from the polygon
-                className: 'wxrisk-halo'
+                color: colour, weight: 10, opacity: 0.35, fill: false,
+                interactive: false, className: 'wxrisk-halo'
             });
         });
 
         state.haloLayer = L.layerGroup(halos).addTo(map);
-
-        // Halo underneath, crisp boundary on top.
-        layers.forEach(function (layer) {
-            if (layer.bringToFront) { layer.bringToFront(); }
-        });
+        layers.forEach(function (layer) { if (layer.bringToFront) { layer.bringToFront(); } });
     }
 
     /** Fade unselected warning areas so the selected one reads clearly. */
@@ -901,40 +1105,39 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         $root.find('[data-role="window-label"]').text('— ' + t('window.' + p.window_hours, p.window_hours + 'h'));
 
+        // Counts are computed from the devices actually shown, not from the
+        // server totals: with a hazard switched off the two disagree, and a
+        // chip that contradicts the map destroys trust in both.
+        var pool = hazardFilteredDevices();
+        var counts = {};
+        LEVELS.forEach(function (l) { counts[l.key] = 0; });
+        pool.forEach(function (d) { counts[levelMeta(effectiveRisk(d)).key]++; });
+
+        var filtered = hiddenHazardKeys().length > 0;
+
         var $counters = $root.find('[data-role="counters"]').empty();
         LEVELS.forEach(function (level) {
-            var count = p.counts[level.key] || 0;
-            if (count === 0 && (level.key === 'extreme' || level.key === 'info')) { return; }
+            var count = counts[level.key] || 0;
+            var total = (p.counts && p.counts[level.key]) || 0;
+            if (count === 0 && total === 0 && (level.key === 'extreme' || level.key === 'info')) { return; }
 
             var active = state.severityFilter === level.value && level.value > 0;
             var meta = levelMeta(level.value);
-            $('<span/>', {
+
+            $('<button/>', {
+                'type': 'button',
                 'class': 'wxrisk-chip' + (active ? ' is-active' : ''),
                 'style': 'color:' + meta.color,
-                'html': riskDot(meta) + '<b>' + count + '</b> <span class="wx-dim">'
-                        + esc(t('levels.' + level.key, level.key)) + '</span>',
+                'aria-pressed': active ? 'true' : 'false',
+                'html': riskDot(meta) + '<b>' + count + '</b>'
+                        + (filtered && total !== count
+                            ? '<span class="wxrisk-count-total">/' + total + '</span>' : '')
+                        + ' <span class="wx-dim">' + esc(meta.label) + '</span>',
                 'data-level': level.value
             }).appendTo($counters);
         });
 
-        var $highest = $root.find('[data-role="highest"]').empty();
-        if (p.highest) {
-            var meta = levelMeta(p.highest.risk);
-            $highest.html(
-                '<b>' + esc(t('highest_risk')) + ':</b> <span style="color:' + meta.color + '">'
-                + esc(p.highest.hazard) + ' — ' + esc(p.highest.location || p.highest.device)
-                + (p.highest.time ? ' — ' + esc(p.highest.time) : '') + '</span>'
-            );
-        }
-
-        var $degraded = $root.find('[data-role="degraded"]');
-        if (p.meta && (p.meta.degraded || p.meta.stale)) {
-            $degraded.removeClass('wx-hidden')
-                .text(p.meta.degraded ? t('degraded') : t('cached_notice'))
-                .attr('title', p.meta.message || t('cached_notice'));
-        } else {
-            $degraded.addClass('wx-hidden');
-        }
+        renderStatus();
 
         $root.find('[data-role="attribution"]').text(
             (p.meta && p.meta.attribution ? p.meta.attribution : '')
@@ -943,66 +1146,164 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         var $legend = $root.find('[data-role="legend-items"]').empty();
         LEVELS.slice().reverse().forEach(function (level) {
+            var meta = levelMeta(level.value);
             $('<div/>', { 'class': 'wxrisk-legend-row' }).append(
-                $('<span/>', { 'class': 'wxrisk-legend-swatch', style: 'background:' + levelMeta(level.value).color }),
-                $('<span/>', { text: t('levels.' + level.key, level.key) })
+                $('<span/>', { 'class': 'wxrisk-legend-swatch', style: 'background:' + meta.color }),
+                $('<span/>', { text: meta.label })
             ).appendTo($legend);
         });
     }
 
+    /**
+     * Data age and degradation.
+     *
+     * Age is shown in normal operation too, not only when something breaks: an
+     * operator needs to know at a glance whether they are looking at data from
+     * four minutes ago or forty.
+     */
+    function renderStatus() {
+        var meta = (state.payload && state.payload.meta) || {};
+        var $updated = $root.find('[data-role="updated"]');
+        var $banner = $root.find('[data-role="banner"]');
+
+        var stamp = fmtTime(meta.last_success) || fmtTime(state.payload && state.payload.generated_at);
+        var age = meta.oldest_data_minutes;
+
+        if (stamp) {
+            $updated.text(tr('updated_at', { time: stamp }))
+                    .attr('title', fmtDateTime(meta.last_success || (state.payload && state.payload.generated_at)) || '')
+                    .toggleClass('is-stale', typeof age === 'number' && age > 30);
+        } else {
+            $updated.text('').removeAttr('title').removeClass('is-stale');
+        }
+
+        var reason = meta.degraded_reason;
+        if (! reason && ! meta.stale) { $banner.addClass('wx-hidden').empty(); return; }
+
+        var parts = [];
+        if (reason === 'forecast') { parts.push(t('degraded_forecast')); }
+        else if (reason === 'warnings') { parts.push(t('degraded_warnings')); }
+        else if (reason === 'both') { parts.push(t('degraded_both')); }
+        else { parts.push(t('cached_notice')); }
+
+        if (meta.last_success) { parts.push(tr('last_success', { time: fmtTime(meta.last_success) })); }
+        if (typeof age === 'number') { parts.push(tr('cached_age', { minutes: age })); }
+        parts.push(t('devices_still_shown'));
+
+        $banner.removeClass('wx-hidden').text(parts.join(' '));
+    }
+
     function renderHazardToggles() {
         var $wrap = $root.find('[data-role="hazard-toggles"]').empty();
-        var enabled = (state.payload && state.payload.settings && state.payload.settings.hazards)
-                      || settings.hazards || {};
 
-        Object.keys(enabled).forEach(function (hazard) {
-            if (! enabled[hazard]) { return; }   // disabled in widget settings
+        enabledHazardKeys().forEach(function (hazard) {
             var on = state.hazardFilter[hazard] !== false;
 
             // Worst level currently present for this hazard, so a chip carrying
-            // real risk is visually distinct from a quiet one.
+            // real risk looks different from a quiet one.
             var worst = 0;
             (state.payload ? state.payload.devices : []).forEach(function (d) {
                 (d.hazards || []).forEach(function (h) {
                     if (h.hazard === hazard) { worst = Math.max(worst, h.risk); }
                 });
             });
-            var meta = levelMeta(worst);
 
-            $('<span/>', {
+            $('<button/>', {
+                'type': 'button',
                 'class': 'wxrisk-chip' + (on ? '' : ' is-off'),
                 'data-hazard': hazard,
-                'html': '<span class="wxrisk-dot" style="background:' + meta.color + '"></span>'
+                'aria-pressed': on ? 'true' : 'false',
+                'html': '<span class="wxrisk-dot" style="background:' + levelMeta(worst).color + '"></span>'
                         + esc(hazard.charAt(0).toUpperCase() + hazard.slice(1))
             }).appendTo($wrap);
         });
     }
 
-    /** Devices passing the severity filter and at least one enabled hazard. */
-    function visibleDevices() {
-        if (! state.payload) { return []; }
+    /** Everything currently narrowing the view, each individually removable. */
+    function renderFilters() {
+        var $bar = $root.find('[data-role="filters"]').empty();
 
-        return state.payload.devices.filter(function (device) {
-            if (device.risk < state.severityFilter) { return false; }
-            if (device.risk === 0) { return state.severityFilter === 0; }
-            return activeHazards(device).length > 0;
-        });
+        if (! hasAnyFilter()) { $bar.addClass('wx-hidden'); return; }
+        $bar.removeClass('wx-hidden');
+
+        $bar.append($('<span/>', { 'class': 'wxrisk-filters-label', text: t('filters_active') }));
+
+        function pill(text, clear) {
+            var $p = $('<span/>', { 'class': 'wxrisk-fpill' })
+                .append($('<span/>', { text: text }))
+                .append($('<button/>', { type: 'button', html: '&times;', 'aria-label': t('clear_all') }));
+            $p.find('button').on('click', function (e) { e.stopPropagation(); clear(); });
+            return $p;
+        }
+
+        if (state.severityFilter > 0) {
+            $bar.append(pill(
+                tr('filter_severity', { level: levelMeta(state.severityFilter).label }),
+                function () { state.severityFilter = 0; render(); }
+            ));
+        }
+
+        var hidden = hiddenHazardKeys();
+        if (hidden.length) {
+            var shown = enabledHazardKeys().filter(function (k) { return hidden.indexOf(k) === -1; });
+            var text = shown.length > 0 && shown.length <= 3
+                ? tr('filter_hazards_only', { list: shown.join(', ') })
+                : tr('filter_hazards_hidden', { count: hidden.length });
+
+            $bar.append(pill(text, function () { state.hazardFilter = {}; render(); }));
+        }
+
+        if (state.selectedWarning) {
+            var w = warningById(state.selectedWarning);
+            $bar.append(pill(
+                tr('filter_warning', { name: w ? (w.event_name || w.title) : state.selectedWarning }),
+                function () { state.selectedWarning = null; applyWarningEmphasis(); render(); }
+            ));
+        }
+
+        if (state.expandedDevice) {
+            var d = deviceById(state.expandedDevice);
+            $bar.append(pill(
+                tr('filter_device', { name: d ? d.display_name : state.expandedDevice }),
+                function () { state.expandedDevice = null; render(); }
+            ));
+        }
+
+        $bar.append($('<button/>', {
+            type: 'button', 'class': 'wxrisk-linkbtn', 'data-role': 'clear-all', text: t('clear_all')
+        }));
     }
 
-    function activeHazards(device) {
-        return (device.hazards || []).filter(function (h) {
-            return state.hazardFilter[h.hazard] !== false;
+    function deviceById(id) {
+        var found = null;
+        (state.payload ? state.payload.devices : []).forEach(function (d) {
+            if (String(d.device_id) === String(id)) { found = d; }
         });
+        return found;
+    }
+
+    /** Why the table came out empty - the reason is rarely the obvious one. */
+    function emptyReason() {
+        if (enabledHazardKeys().length && hiddenHazardKeys().length === enabledHazardKeys().length) {
+            return t('empty_hazards');
+        }
+        if (state.selectedWarning) {
+            var w = warningById(state.selectedWarning);
+            if (w && (w.polygons || []).length) { return t('empty_warning'); }
+        }
+        if (hiddenHazardKeys().length) { return t('empty_hazard_filter'); }
+        if (state.severityFilter > 0) { return t('empty_severity'); }
+        return t('no_devices_at_risk');
     }
 
     function renderTable() {
         var $body = $root.find('[data-role="rows"]').empty();
-        var rows = visibleDevices().filter(function (d) { return d.risk >= 2; });
+        var visible = visibleDevices();
+        var rows = visible.filter(function (d) { return effectiveRisk(d) >= 2; });
 
-        // When a locatable warning is selected the table narrows to its
-        // devices, so strip, map and table describe the same thing. A warning
-        // published without geometry matches no device, so filtering on it
-        // would blank the table for no useful reason.
+        // A locatable warning narrows the table to its devices, so strip, map
+        // and table describe the same thing. A warning with no geometry matches
+        // no device, so filtering on it would blank the table for no reason.
         if (state.selectedWarning) {
             var selected = warningById(state.selectedWarning);
             if (selected && (selected.polygons || []).length) {
@@ -1011,10 +1312,32 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             }
         }
 
+        var total = state.payload ? state.payload.devices.length : 0;
+        $root.find('[data-role="table-count"]').text(
+            tr('table_heading_count', { shown: rows.length, total: total })
+        );
+
+        // Sort indicator: without it the header click is a coin flip.
+        $root.find('.wxrisk-table th').each(function () {
+            var $th = $(this);
+            var key = $th.attr('data-sort');
+            var active = key && key === state.sort.key;
+            $th.toggleClass('is-sorted', !! active);
+            $th.find('.wxrisk-sortmark').text(active ? (state.sort.dir === 'asc' ? '▲' : '▼') : '');
+            if (key) { $th.attr('aria-sort', active ? (state.sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'); }
+        });
+
         if (! rows.length) {
-            $('<tr/>').append($('<td/>', {
-                colspan: 6, 'class': 'wxrisk-empty', text: t('no_devices_at_risk')
-            })).appendTo($body);
+            var $cell = $('<td/>', { colspan: 6, 'class': 'wxrisk-empty' })
+                .append($('<span/>', { text: emptyReason() }));
+
+            if (hasAnyFilter()) {
+                $cell.append($('<button/>', {
+                    type: 'button', 'class': 'wxrisk-linkbtn', 'data-role': 'clear-all', text: t('empty_clear')
+                }));
+            }
+
+            $('<tr/>').append($cell).appendTo($body);
             return;
         }
 
@@ -1031,49 +1354,51 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 case 'location': av = a.location || '';     bv = b.location || '';     break;
                 case 'hazard':   av = ah.hazard_label || ''; bv = bh.hazard_label || ''; break;
                 case 'time':     av = ah.peak_time || '';   bv = bh.peak_time || '';   break;
-                default:         av = a.risk; bv = b.risk;
+                default:         av = effectiveRisk(a); bv = effectiveRisk(b);
             }
 
             if (av < bv) { return -1 * dir; }
             if (av > bv) { return 1 * dir; }
-            return (b.risk - a.risk) || String(a.display_name).localeCompare(String(b.display_name));
+            return (effectiveRisk(b) - effectiveRisk(a))
+                || String(a.display_name).localeCompare(String(b.display_name));
         });
 
         rows.forEach(function (device) {
             var hazard = activeHazards(device)[0] || {};
-            var meta = levelMeta(device.risk);
+            var meta = levelMeta(effectiveRisk(device));
+            var expanded = state.expandedDevice === String(device.device_id);
 
-            var $tr = $('<tr/>', { 'data-device': device.device_id });
-            $tr.append($('<td/>', { html: riskDot(meta, 11) }));
+            var $tr = $('<tr/>', {
+                'data-device': device.device_id,
+                'tabindex': 0,
+                'role': 'button',
+                'aria-expanded': expanded ? 'true' : 'false'
+            });
+
+            $tr.append($('<td/>', { html: riskLabel(meta) }));
             $tr.append($('<td/>', {
                 html: esc(device.display_name)
-                      + (device.up ? '' : ' <span class="wxrisk-dot" style="background:var(--wx-severe)" title="'
-                         + esc(t('status_down')) + '"></span>')
-                      // Locating on the map is now an explicit action rather
-                      // than a side effect of wanting to read the forecast.
+                      + (device.up ? '' : ' <span class="wxrisk-badge is-down">' + esc(t('status_down')) + '</span>')
                       + ' <button type="button" class="wxrisk-locate" data-locate="' + device.device_id
-                      + '" title="' + esc(t('locate')) + '">' + svgIcon(LOCATE_PATH) + '</button>'
+                      + '" aria-label="' + esc(t('locate')) + '" title="' + esc(t('locate')) + '">'
+                      + svgIcon(LOCATE_PATH) + '</button>'
             }));
             $tr.append($('<td/>', { text: device.location || '' }));
             $tr.append($('<td/>', {
                 html: hazardSvg(hazard.hazard) + ' ' + esc(hazard.hazard_label || '')
-                      + (hazard.official ? ' <span class="wxrisk-badge" style="background:' + meta.color
-                         + ';color:#fff">OFF</span>' : '')
+                      + (hazard.official ? ' <span class="wxrisk-badge">OFFICIAL</span>' : '')
             }));
             $tr.append($('<td/>', { text: hazard.detail || '' }));
-            $tr.append($('<td/>', { text: hazard.peak_time_short || '' }));
+            $tr.append($('<td/>', { text: fmtTime(hazard.peak_time) || '' }));
 
             $body.append($tr);
 
-            // Re-open whatever the operator had expanded before the refresh,
-            // so a 10-minute reload does not close what they were reading.
-            if (state.expandedDevice === String(device.device_id)) {
-                $body.append(detailRow(device));
-            }
+            // Re-open whatever was expanded before the refresh, so a reload
+            // does not close what the operator was reading.
+            if (expanded) { $body.append(detailRow(device)); }
         });
     }
 
-    /** Inline detail row holding the same content as the map popup. */
     function detailRow(device) {
         return $('<tr/>', { 'class': 'wxrisk-detailrow', 'data-detail': device.device_id })
             .append($('<td/>', { colspan: 6, html: devicePopup(device) }));
@@ -1082,14 +1407,14 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     // ----------------------------------------------------------------- map
 
     function deviceIcon(device, highlit, selected) {
-        var meta = levelMeta(device.risk);
-        var size = device.risk >= 3 ? 18 : 14;
-        if (selected) { size += 4; }        // the selected device reads first
+        var meta = levelMeta(effectiveRisk(device));
+        var size = effectiveRisk(device) >= 3 ? 18 : 14;
+        if (selected) { size += 4; }
         var classes = 'wxrisk-marker'
             + (device.up ? '' : ' is-down')
             + (device.disabled ? ' is-disabled' : '')
-            + (device.risk === 4 ? ' is-severe' : '')
-            + (device.risk === 5 ? ' is-extreme' : '')
+            + (effectiveRisk(device) === 4 ? ' is-severe' : '')
+            + (effectiveRisk(device) === 5 ? ' is-extreme' : '')
             + (highlit ? ' is-highlit' : '')
             + (selected ? ' is-selected' : '');
 
@@ -1103,14 +1428,14 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     }
 
     function devicePopup(device) {
-        var meta = levelMeta(device.risk);
+        var meta = levelMeta(effectiveRisk(device));
         var html = '<div class="wxrisk-popup">';
 
         html += '<h4><a href="' + esc(deviceBase + '/' + device.device_id) + '">'
              + esc(device.display_name) + '</a></h4>';
 
         html += '<div class="wxrisk-kv"><span>' + esc(t('popup.status')) + '</span><b style="color:'
-             + (device.up ? '#2e9e4f' : '#cc2b2b') + '">'
+             + (device.up ? 'inherit' : meta.color) + '">'
              + esc(device.disabled ? t('status_disabled') : (device.up ? t('status_up') : t('status_down')))
              + '</b></div>';
 
@@ -1119,8 +1444,8 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                  + esc(device.location) + '</span></div>';
         }
 
-        html += '<div class="wxrisk-kv"><span>' + esc(t('popup.weather_risk')) + '</span><b style="color:'
-             + meta.color + '">' + esc(device.risk_label) + '</b></div>';
+        html += '<div class="wxrisk-kv"><span>' + esc(t('popup.weather_risk')) + '</span><b>'
+             + riskLabel(meta) + '</b></div>';
 
         if (device.current) {
             html += '<div class="wxrisk-sec"><b>' + esc(t('popup.current')) + '</b>';
@@ -1150,11 +1475,11 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             html += '<div class="wxrisk-sec"><b>' + esc(t('popup.warnings')) + '</b><div class="wxrisk-scroll">';
             hazards.forEach(function (h) {
                 var hm = levelMeta(h.risk);
-                html += '<div>' + riskDot(hm) + ' '
-                     + esc(h.hazard_label) + ' — ' + esc(h.detail)
+                var at = fmtTime(h.peak_time);
+                html += '<div>' + riskDot(hm) + ' ' + esc(h.hazard_label) + ' — ' + esc(h.detail)
                      + (h.official ? ' <i class="wxrisk-muted">(official)</i>' : '')
                      + (h.inferred ? ' <i class="wxrisk-muted">(risk)</i>' : '')
-                     + (h.peak_time_short ? ' <span class="wxrisk-muted">@' + esc(h.peak_time_short) + '</span>' : '')
+                     + (at ? ' <span class="wxrisk-muted">@' + esc(at) + '</span>' : '')
                      + '</div>';
             });
             html += '</div></div>';
@@ -1183,26 +1508,24 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         var affected = affectedDeviceIds(warning.id).length;
 
         var html = '<div class="wxrisk-popup"><h4 style="color:' + meta.color + '">'
-                 + hazardSvg(warning.hazard) + ' '
-                 + esc(warning.event_name || warning.title) + '</h4>';
+                 + hazardSvg(warning.hazard) + ' ' + esc(warning.event_name || warning.title) + '</h4>';
 
-        html += '<div class="wxrisk-kv"><span>' + esc(t('warning_popup.severity')) + '</span><b style="color:'
-             + meta.color + '">' + esc(warning.severity_label) + '</b></div>';
+        html += '<div class="wxrisk-kv"><span>' + esc(t('warning_popup.severity')) + '</span><b>'
+             + riskLabel(meta) + ' <span class="wxrisk-muted">(' + esc(warning.severity_label) + ')</span></b></div>';
 
         if (warning.area) {
             html += '<div class="wxrisk-kv"><span>' + esc(t('warning_popup.area')) + '</span><span>'
                  + esc(warning.area) + '</span></div>';
         }
-        html += '<div class="wxrisk-kv"><span>' + esc(t('infrastructure_at_risk')) + '</span><b>'
-             + affected + '</b></div>';
+        html += '<div class="wxrisk-kv"><span>' + esc(t('table_heading')) + '</span><b>' + affected + '</b></div>';
 
         if (warning.onset) {
             html += '<div class="wxrisk-kv"><span>' + esc(t('warning_popup.starts')) + '</span><span>'
-                 + esc(new Date(warning.onset).toLocaleString()) + '</span></div>';
+                 + esc(fmtDateTime(warning.onset)) + '</span></div>';
         }
         if (warning.expires) {
             html += '<div class="wxrisk-kv"><span>' + esc(t('warning_popup.ends')) + '</span><span>'
-                 + esc(new Date(warning.expires).toLocaleString()) + '</span></div>';
+                 + esc(fmtDateTime(warning.expires)) + '</span></div>';
         }
 
         html += '<div class="wxrisk-scroll">';
@@ -1224,8 +1547,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         html += '<div class="wxrisk-sec wxrisk-muted">' + esc(t('warning_popup.source')) + ': ' + esc(warning.source);
         if (warning.fetched_at) {
-            html += ' · ' + esc(t('warning_popup.updated')) + ' '
-                 + esc(new Date(warning.fetched_at).toLocaleTimeString());
+            html += ' · ' + esc(t('warning_popup.updated')) + ' ' + esc(fmtTime(warning.fetched_at));
         }
         html += '</div>';
 
@@ -1251,29 +1573,21 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         visibleWarnings().forEach(function (warning) {
             var now = isActiveNow(warning);
-            // Warnings not yet in force are drawn dashed and lighter, so "now"
-            // and "later" are distinguishable at a glance on the map itself.
-            // Dark tiles are dimmed, so the fill needs a little more presence.
+            // Not-yet-active warnings are dashed and lighter, so "now" and
+            // "later" are distinguishable on the map itself. Dark tiles are
+            // dimmed, so the fill needs a little more presence.
             var baseFill = (now ? 0.22 : 0.10) + (isDark() ? 0.04 : 0);
-
-            // Theme palette rather than warning.risk_color: the server hex is
-            // tuned for a light background and goes muddy on the dark basemap.
             var wcolor = levelMeta(warning.risk).color;
 
             (warning.polygons || []).forEach(function (ring) {
                 if (! ring || ring.length < 3) { return; }
 
                 var polygon = L.polygon(ring, {
-                    color: wcolor,
-                    weight: 2,
-                    opacity: 0.95,
+                    color: wcolor, weight: 2, opacity: 0.95,
                     dashArray: now ? null : '5,4',
-                    fillColor: wcolor,
-                    fillOpacity: baseFill,
-                    _baseFill: baseFill
+                    fillColor: wcolor, fillOpacity: baseFill, _baseFill: baseFill
                 });
 
-                // Hover label: identify an area without having to click it.
                 polygon.bindTooltip(
                     '<span style="color:' + wcolor + '">' + hazardSvg(warning.hazard) + '</span> '
                     + esc(warning.event_name || warning.title)
@@ -1281,7 +1595,8 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                     { sticky: true, direction: 'top', className: 'wxrisk-wtip', opacity: 1 }
                 );
 
-                polygon.bindPopup(warningPopup(warning), { maxWidth: 320 });
+                // autoPan off: opening a popup must not move the map either.
+                polygon.bindPopup(warningPopup(warning), { maxWidth: 320, autoPan: false });
 
                 polygon.on('mouseover', function () {
                     if (state.selectedWarning !== null && state.selectedWarning !== warning.id) { return; }
@@ -1310,7 +1625,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     function renderMarkers() {
         var map = get_map(mapId);
-        if (! map) { return; }
+        if (! map || ! state.payload) { return; }
 
         var highlit = state.selectedWarning ? affectedDeviceIds(state.selectedWarning) : [];
         var devices = visibleDevices();
@@ -1319,18 +1634,18 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         var markers = devices.map(function (device) {
             var isHighlit = highlit.indexOf(device.device_id) !== -1;
             var isSelected = state.expandedDevice === String(device.device_id);
+
             var marker = L.marker([device.lat, device.lng], {
                 icon: deviceIcon(device, isHighlit, isSelected),
                 title: device.display_name,
-                // Worse weather draws on top of calmer neighbours; the selected
-                // device outranks everything.
-                zIndexOffset: isSelected ? 100000 : device.risk * 1000,
-                // Carried explicitly rather than derived from zIndexOffset:
-                // the cluster icon needs the real risk, and overloading the
-                // z-index for selection would otherwise corrupt its colour.
-                wxRisk: device.risk
+                zIndexOffset: isSelected ? 100000 : effectiveRisk(device) * 1000,
+                // Carried explicitly rather than derived from zIndexOffset: the
+                // cluster icon needs the real risk, and overloading the z-index
+                // for selection would otherwise corrupt its colour.
+                wxRisk: effectiveRisk(device),
+                wxSelected: isSelected
             });
-            marker.bindPopup(devicePopup(device), { maxWidth: 320 });
+            marker.bindPopup(devicePopup(device), { maxWidth: 320, autoPan: false });
             state.markers[device.device_id] = marker;
             return marker;
         });
@@ -1340,20 +1655,20 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         } else if (state.payload.settings.clustering && L.markerClusterGroup) {
             state.cluster = L.markerClusterGroup({
                 maxClusterRadius: 45,
-                // Cluster takes the colour of the WORST device inside it, so a
-                // single red site is never hidden by 26 green ones.
+                // The cluster takes the colour of its WORST device, so a single
+                // red site is never hidden by 26 green ones.
                 iconCreateFunction: function (cluster) {
                     var children = cluster.getAllChildMarkers();
                     var worst = 0;
                     var holdsSelected = false;
                     for (var i = 0; i < children.length; i++) {
                         worst = Math.max(worst, children[i].options.wxRisk || 0);
-                        if (children[i].options.zIndexOffset === 100000) { holdsSelected = true; }
+                        if (children[i].options.wxSelected) { holdsSelected = true; }
                     }
                     var meta = levelMeta(worst);
                     var size = worst >= 3 ? 40 : 34;
-                    // A clustered selection would otherwise be invisible, so
-                    // the cluster hiding it pulses in its place.
+                    // A clustered selection would otherwise be invisible, so the
+                    // cluster hiding it pulses in its place.
                     return L.divIcon({
                         html: '<div class="wxrisk-cluster' + (holdsSelected ? ' is-selected' : '')
                               + '" style="width:' + size + 'px;height:' + size
@@ -1375,20 +1690,18 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         }
     }
 
-
     // ----------------------------------------------------------- position
 
-    /**
+    /*
      * Where the map opens, per the widget's "Default map mode" setting:
-     *
-     *   auto     - fit the bounds of the visible devices on every refresh
+     *   auto     - fit the visible devices on every refresh
      *   fixed    - always open at the configured lat/lng/zoom
      *   remember - restore wherever this operator last panned to
      *
      * "remember" persists to localStorage rather than the widget row on
      * purpose: it is a per-operator preference, several people commonly share
      * one dashboard, and writing widget settings needs dashboard update
-     * permission that a read-only NOC account will not have.
+     * permission a read-only NOC account will not have.
      */
     var VIEW_KEY = 'wxrisk.view.' + widgetId;
 
@@ -1396,12 +1709,9 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         try {
             var raw = window.localStorage.getItem(VIEW_KEY);
             if (! raw) { return null; }
-
             var view = JSON.parse(raw);
             if (typeof view.lat !== 'number' || typeof view.lng !== 'number'
-                || typeof view.zoom !== 'number') {
-                return null;
-            }
+                || typeof view.zoom !== 'number') { return null; }
             return view;
         } catch (e) {
             return null;   // private mode, quota, or corrupt value
@@ -1411,24 +1721,15 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     function storeView() {
         var map = get_map(mapId);
         if (! map || settings.map_mode !== 'remember') { return; }
-
         try {
             var c = map.getCenter();
-            window.localStorage.setItem(VIEW_KEY, JSON.stringify({
-                lat: c.lat, lng: c.lng, zoom: map.getZoom()
-            }));
-        } catch (e) {
-            // localStorage unavailable - remembering simply stops working.
-        }
+            window.localStorage.setItem(VIEW_KEY, JSON.stringify({ lat: c.lat, lng: c.lng, zoom: map.getZoom() }));
+        } catch (e) { /* localStorage unavailable - remembering just stops */ }
     }
 
-    /** The configured fixed position, or null when it is unusable. */
     function fixedView() {
         if (settings.init_lat === null || settings.init_lat === undefined
-            || settings.init_lng === null || settings.init_lng === undefined) {
-            return null;
-        }
-
+            || settings.init_lng === null || settings.init_lng === undefined) { return null; }
         return {
             lat: Number(settings.init_lat),
             lng: Number(settings.init_lng),
@@ -1436,24 +1737,15 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         };
     }
 
-    /**
-     * Apply the initial view. Returns true if it positioned the map, false to
-     * let the caller fall back to auto-fitting the devices.
-     */
     function applyInitialView() {
         var map = get_map(mapId);
         if (! map) { return false; }
 
         var view = null;
-
-        if (settings.map_mode === 'remember') {
-            view = storedView() || fixedView();
-        } else if (settings.map_mode === 'fixed') {
-            view = fixedView();
-        }
+        if (settings.map_mode === 'remember') { view = storedView() || fixedView(); }
+        else if (settings.map_mode === 'fixed') { view = fixedView(); }
 
         if (! view) { return false; }
-
         map.setView([view.lat, view.lng], view.zoom);
         return true;
     }
@@ -1482,30 +1774,63 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         renderPolygons();
         renderMarkers();
 
-        // Initial positioning happens once; after that only 'auto' keeps
-        // re-fitting, so a refresh never yanks the map away from an operator
-        // who has panned somewhere deliberately.
+        // Positioning happens once; after that only 'auto' keeps re-fitting, so
+        // a refresh never yanks the map away from a deliberate pan.
         if (! state.positioned) {
             state.positioned = true;
-            // Spec section 18: when no explicit position is configured, fit the
-            // devices actually present - never a hard-coded country or city.
-            if (! applyInitialView() && state.payload.bounds) {
-                fitDevices();
-            }
+            if (! applyInitialView() && state.payload.bounds) { fitDevices(); }
         } else if (settings.map_mode === 'auto' && state.payload.bounds) {
             fitDevices();
         }
 
-        $root.find('[data-action="toggle-warnings"]').toggleClass('is-off', ! state.showWarnings);
+        $root.find('[data-action="toggle-warnings"]').attr('aria-pressed', state.showWarnings ? 'true' : 'false');
     }
+
+    // ------------------------------------------------------------- density
+
+    /**
+     * Shed furniture rather than overflow.
+     *
+     * LibreNMS adds widgets at size_y 3 / cellHeight 100, leaving about 260px
+     * of body - roughly half what the full chrome needs. Rather than let the
+     * widget scroll (which buries the map), the hazard chips fold into a
+     * popover and the table collapses as height shrinks.
+     */
+    function applyDensity() {
+        var h = $root.height() || 0;
+        if (! h) { return; }
+
+        var compact = h < 430;
+        var tiny = h < 300;
+
+        $root.toggleClass('is-compact', compact);
+        $root.toggleClass('is-tiny', tiny);
+
+        // Only auto-collapse until the operator expresses a preference.
+        if (! state.tableUserSet) {
+            setTableOpen(! compact, false);
+        }
+    }
+
+    function setTableOpen(open, userInitiated) {
+        state.tableOpen = open;
+        if (userInitiated) { state.tableUserSet = true; }
+
+        $root.find('[data-role="table-wrap"]').toggleClass('wx-hidden', ! open);
+        $root.find('[data-role="table-toggle"]').attr('aria-expanded', open ? 'true' : 'false');
+    }
+
+    // -------------------------------------------------------------- render
 
     function render() {
         refreshPalette();
         renderSummary();
         renderHazardToggles();
+        renderFilters();
         renderWarnings();
         renderTable();
         renderMap();
+        applyDensity();
 
         var p = state.payload;
         overlay(p && p.devices.length === 0
@@ -1513,11 +1838,10 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             : null);
     }
 
-    // ---------------------------------------------------------------- fetch
-
     function load() {
         if (state.loading) { return; }
         state.loading = true;
+        $root.addClass('is-loading');
 
         $.ajax({
             type: 'POST',
@@ -1526,16 +1850,21 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             data: { id: widgetId, _token: csrfToken },
             success: function (data) {
                 state.loading = false;
+                $root.removeClass('is-loading');
 
                 if (! data || data.status !== 'ok') {
                     overlay((data && data.message) || t('error_generic'));
                     return;
                 }
 
-                // Drop a selection whose warning has expired between refreshes.
+                // Drop selections whose subject vanished between refreshes.
                 if (state.selectedWarning
                     && ! (data.warnings || []).some(function (w) { return w.id === state.selectedWarning; })) {
                     state.selectedWarning = null;
+                }
+                if (state.expandedDevice
+                    && ! (data.devices || []).some(function (d) { return String(d.device_id) === state.expandedDevice; })) {
+                    state.expandedDevice = null;
                 }
 
                 state.payload = data;
@@ -1543,6 +1872,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             },
             error: function (xhr) {
                 state.loading = false;
+                $root.removeClass('is-loading');
                 overlay(xhr && xhr.status === 429
                     ? 'Too many refreshes - please wait a moment.'
                     : t('error_generic'));
@@ -1564,44 +1894,40 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         render();
     });
 
+    $root.on('click', '[data-role="hazards-all"]', function () {
+        state.hazardFilter = {};
+        render();
+    });
+
+    $root.on('click', '[data-role="hazards-none"]', function () {
+        enabledHazardKeys().forEach(function (k) { state.hazardFilter[k] = false; });
+        render();
+    });
+
+    $root.on('click', '[data-role="hazard-menu"]', function () {
+        var $wrap = $root.find('.wxrisk-hazards');
+        var open = ! $wrap.hasClass('is-open');
+        $wrap.toggleClass('is-open', open);
+        $(this).attr('aria-expanded', open ? 'true' : 'false');
+    });
+
+    $root.on('click', '[data-role="clear-all"]', function (event) {
+        event.stopPropagation();
+        clearAllFilters();
+    });
+
     $root.on('click', '[data-warning]', function () {
-        // Warnings published without geometry are selectable too now: there is
+        // Warnings published without geometry are selectable too: there is
         // nothing to fly to, but their text is still worth reading.
         selectWarning($(this).attr('data-warning'));
-        renderTable();
     });
 
     $root.on('click', '[data-locate-warning]', function (event) {
         event.stopPropagation();
-
         var map = get_map(mapId);
         var bounds = warningBounds($(this).attr('data-locate-warning'));
         if (map && bounds && bounds.isValid()) {
             map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });
-        }
-    });
-
-    $root.on('click', '[data-role="clear-selection"]', function () {
-        state.selectedWarning = null;
-        applyWarningEmphasis();      // also removes the halo
-        renderWarnings();
-        renderMarkers();
-        renderTable();
-    });
-
-    $root.on('click', '.wxrisk-toolbar button', function () {
-        var action = $(this).attr('data-action');
-
-        if (action === 'fit-devices') { fitDevices(); }
-        if (action === 'fit-warnings') { fitWarnings(); }
-        if (action === 'toggle-warnings') {
-            state.showWarnings = ! state.showWarnings;
-            $(this).toggleClass('is-off', ! state.showWarnings);
-            renderPolygons();
-        }
-        if (action === 'toggle-legend') {
-            state.showLegend = ! state.showLegend;
-            $root.find('[data-role="legend"]').toggleClass('wx-hidden', ! state.showLegend);
         }
     });
 
@@ -1616,36 +1942,23 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         renderTable();
     });
 
-    /*
-     * Clicking a row expands the weather detail in place. It deliberately does
-     * NOT move the map: reading a device's forecast should not cost you the
-     * view you had set up. Use the crosshair button in the row to locate it.
-     */
-    $root.on('click', 'tbody tr[data-device]', function () {
-        var $row = $(this);
-        var id = $row.attr('data-device');
-
-        // Clicking the open row again closes it.
-        if (state.expandedDevice === id) {
-            state.expandedDevice = null;
-            $root.find('tr[data-detail]').remove();
-            renderMarkers();
-            return;
-        }
-
-        var device = null;
-        (state.payload ? state.payload.devices : []).forEach(function (d) {
-            if (String(d.device_id) === id) { device = d; }
-        });
-        if (! device) { return; }
-
-        state.expandedDevice = id;
-        $root.find('tr[data-detail]').remove();
-        $row.after(detailRow(device));
-        renderMarkers();          // highlight it on the map, without moving there
+    $root.on('click', '[data-role="table-toggle"]', function () {
+        setTableOpen(! state.tableOpen, true);
     });
 
-    // Explicit locate: the only thing that moves the map from the table.
+    /*
+     * Clicking a row expands the weather detail in place. It deliberately does
+     * NOT move the map: reading a device's forecast should not cost the view
+     * you had set up. The crosshair button in the row locates it explicitly.
+     */
+    $root.on('click', 'tbody tr[data-device]', function () {
+        var id = $(this).attr('data-device');
+        state.expandedDevice = (state.expandedDevice === id) ? null : id;
+        renderFilters();
+        renderTable();
+        renderMarkers();          // highlight on the map, without moving there
+    });
+
     $root.on('click', '[data-locate]', function (event) {
         event.stopPropagation();          // do not also toggle the detail row
 
@@ -1662,21 +1975,46 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         }
     });
 
+    $root.on('click', '.wxrisk-toolbar button', function () {
+        var action = $(this).attr('data-action');
+
+        if (action === 'fit-devices') { fitDevices(); }
+        if (action === 'fit-warnings') { fitWarnings(); }
+        if (action === 'toggle-warnings') {
+            state.showWarnings = ! state.showWarnings;
+            $(this).attr('aria-pressed', state.showWarnings ? 'true' : 'false');
+            renderPolygons();
+        }
+        if (action === 'toggle-legend') {
+            state.showLegend = ! state.showLegend;
+            $(this).attr('aria-pressed', state.showLegend ? 'true' : 'false');
+            $root.find('[data-role="legend"]').toggleClass('wx-hidden', ! state.showLegend);
+        }
+    });
+
+    // Keyboard equivalence for the elements that are not native buttons.
+    $root.on('keydown', '[data-warning], tbody tr[data-device]', function (event) {
+        if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+            event.preventDefault();
+            $(this).trigger('click');
+        }
+    });
+
+    $root.on('scroll', '[data-role="warning-cards"]', updateStripOverflow);
+
     // ------------------------------------------------------------ theming
 
     /**
      * Repaint when the LibreNMS theme changes, without a dashboard reload.
      *
-     * CSS follows `html.dark` on its own, but anything JavaScript painted does
-     * not: Leaflet polygon strokes and fills are inline SVG attributes, and
-     * marker fills are inline styles baked into a divIcon at creation time.
-     * Both are frozen at their light-theme colours until something rebuilds
-     * them, so the theme is watched and the layers re-rendered.
+     * CSS follows html.dark on its own, but anything JavaScript painted does
+     * not: Leaflet polygon strokes are inline SVG attributes and marker fills
+     * are inline styles baked into a divIcon at creation, both frozen until
+     * something rebuilds them.
      *
-     * A MutationObserver on <html> is used rather than a prefers-color-scheme
-     * listener because LibreNMS's 'light' and 'dark' preferences deliberately
-     * override the OS; only the 'device' preference follows it, and in that
-     * case applySiteStyle() still toggles the class, so this catches every path.
+     * A MutationObserver is used rather than a prefers-color-scheme listener
+     * because LibreNMS's explicit light/dark preferences override the OS; only
+     * "device" follows it, and that path still toggles the class.
      */
     function watchTheme() {
         if (! window.MutationObserver) { return; }
@@ -1686,27 +2024,30 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         state.themeObserver = new MutationObserver(function () {
             var dark = isDark();
             if (dark === state.wasDark) { return; }   // unrelated class change
-
             state.wasDark = dark;
             refreshPalette();
-
-            if (state.payload) {
-                render();
-            }
+            if (state.payload) { render(); }
         });
 
         state.themeObserver.observe(document.documentElement, {
-            attributes: true,
-            attributeFilter: ['class']
+            attributes: true, attributeFilter: ['class']
         });
+    }
+
+    function watchSize() {
+        if (! window.ResizeObserver) { return; }
+        state.sizeObserver = new ResizeObserver(function () {
+            applyDensity();
+            updateStripOverflow();
+        });
+        state.sizeObserver.observe($root[0]);
     }
 
     // ------------------------------------------------------------------ boot
 
     // The same load order the core world-map widget uses. L.Control.Locate is
     // required even though this widget never calls it: init_map() adds the
-    // locate control itself whenever the page is served over HTTPS, and would
-    // throw without it.
+    // locate control itself whenever the page is served over HTTPS.
     loadjs('js/leaflet.js', function () {
         loadjs('js/leaflet.markercluster.js', function () {
             loadjs('js/L.Control.Locate.min.js', function () {
@@ -1716,33 +2057,35 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 // the core world-map widget so the dashboard still scrolls.
                 map.scrollWheelZoom.disable();
 
-                // In "remember" mode, persist wherever the operator settles.
-                // moveend covers pan and zoom, and fires once per gesture.
                 if (settings.map_mode === 'remember') {
                     map.on('moveend', storeView);
                 }
 
                 refreshPalette();
                 watchTheme();
+                watchSize();
+                applyDensity();
                 load();
 
                 $('#' + rootId)
                     .on('click', function () { var m = get_map(mapId); if (m) { m.scrollWheelZoom.enable(); } })
                     .on('mouseleave', function () { var m = get_map(mapId); if (m) { m.scrollWheelZoom.disable(); } })
-                    .on('resize', function () { var m = get_map(mapId); if (m) { m.invalidateSize(); } })
+                    .on('resize', function () {
+                        var m = get_map(mapId);
+                        if (m) { m.invalidateSize(); }
+                        applyDensity();
+                        updateStripOverflow();
+                    })
                     .on('refresh', function () {
                         var m = get_map(mapId);
                         if (m) { m.invalidateSize(); }
                         load();
                     })
                     .on('destroy', function () {
-                        // The observer is on <html>, which outlives this widget,
-                        // so it must be disconnected or it leaks on every
-                        // dashboard edit and keeps a dead closure alive.
-                        if (state.themeObserver) {
-                            state.themeObserver.disconnect();
-                            state.themeObserver = null;
-                        }
+                        // Both observers outlive this widget's DOM, so they must
+                        // be disconnected or they leak on every dashboard edit.
+                        if (state.themeObserver) { state.themeObserver.disconnect(); state.themeObserver = null; }
+                        if (state.sizeObserver) { state.sizeObserver.disconnect(); state.sizeObserver = null; }
                         state.markers = {};
                         state.cluster = null;
                         state.polygonLayer = null;
