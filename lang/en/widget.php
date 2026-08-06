@@ -26,6 +26,7 @@ return [
     'highest_risk' => 'Highest risk',
     'infrastructure_at_risk' => 'Infrastructure at risk',
     'no_devices_at_risk' => 'No devices above the selected severity.',
+    'locate' => 'Centre the map on this device',
     'no_devices' => 'No devices with valid GPS coordinates match the current filter.',
     'loading' => 'Loading weather risk data...',
 

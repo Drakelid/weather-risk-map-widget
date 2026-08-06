@@ -330,6 +330,32 @@ html.dark .wxrisk-widget .wxrisk-when.is-now { color: #1a1a1a; }
 .wxrisk-widget .wxrisk-table td { padding: 4px 8px; vertical-align: top; }
 .wxrisk-widget .wxrisk-table .wxrisk-empty { color: var(--wx-muted); padding: 8px; }
 
+/* Expanded weather detail, shown in place of moving the map. */
+.wxrisk-widget .wxrisk-detailrow > td {
+    background: var(--wx-surface);
+    padding: 8px 12px;
+    cursor: default;
+    border-top: 0;
+}
+.wxrisk-widget .wxrisk-detailrow .wxrisk-popup {
+    max-width: none; min-width: 0;
+}
+.wxrisk-widget .wxrisk-detailrow .wxrisk-popup .wxrisk-scroll { max-height: none; }
+/* The row already names the device; the popup heading would just repeat it. */
+.wxrisk-widget .wxrisk-detailrow .wxrisk-popup h4 { font-size: 13.5px; }
+.wxrisk-widget .wxrisk-detailrow .wxrisk-kv { max-width: 320px; }
+
+/* Explicit "centre the map here" control. */
+.wxrisk-widget .wxrisk-locate {
+    background: none; border: 0; padding: 0 2px; margin-left: 3px;
+    color: var(--wx-muted); cursor: pointer; vertical-align: -2px;
+    opacity: 0; transition: opacity .12s, color .12s;
+}
+.wxrisk-widget .wxrisk-table tbody tr:hover .wxrisk-locate { opacity: 1; }
+.wxrisk-widget .wxrisk-locate:hover { color: var(--wx-link); }
+.wxrisk-widget .wxrisk-locate:focus { opacity: 1; outline: 1px dotted currentColor; }
+.wxrisk-widget .wxrisk-locate .wxrisk-ico { width: 13px; height: 13px; }
+
 /* ----------------------------------------------------------- markers --- */
 /* Weather risk is the fill; LibreNMS down state is the border. */
 .wxrisk-marker { border-radius: 50%; border: 2px solid rgba(255,255,255,.9); box-sizing: border-box; }
@@ -452,6 +478,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         showWarnings: settings.show_warnings !== false,
         showLegend: false,
         positioned: false,
+        expandedDevice: null,
         loading: false,
         palette: null,
         themeObserver: null,
@@ -545,6 +572,9 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         cold:      '<path d="M14 14.8V4a2 2 0 1 0-4 0v10.8a4 4 0 1 0 4 0z"/><path d="M12 11.5v3"/>',
         other:     '<path d="M12 3 2.5 20h19z"/><path d="M12 10v4M12 17h.01"/>'
     };
+
+    var LOCATE_PATH = '<circle cx="12" cy="12" r="6.5"/>'
+                    + '<path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/>';
 
     function hazardSvg(hazard) {
         var key = Object.prototype.hasOwnProperty.call(HAZARD_PATHS, hazard) ? hazard : 'other';
@@ -887,6 +917,10 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 html: esc(device.display_name)
                       + (device.up ? '' : ' <span class="wxrisk-dot" style="background:var(--wx-severe)" title="'
                          + esc(t('status_down')) + '"></span>')
+                      // Locating on the map is now an explicit action rather
+                      // than a side effect of wanting to read the forecast.
+                      + ' <button type="button" class="wxrisk-locate" data-locate="' + device.device_id
+                      + '" title="' + esc(t('locate')) + '">' + svgIcon(LOCATE_PATH) + '</button>'
             }));
             $tr.append($('<td/>', { text: device.location || '' }));
             $tr.append($('<td/>', {
@@ -898,7 +932,19 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             $tr.append($('<td/>', { text: hazard.peak_time_short || '' }));
 
             $body.append($tr);
+
+            // Re-open whatever the operator had expanded before the refresh,
+            // so a 10-minute reload does not close what they were reading.
+            if (state.expandedDevice === String(device.device_id)) {
+                $body.append(detailRow(device));
+            }
         });
+    }
+
+    /** Inline detail row holding the same content as the map popup. */
+    function detailRow(device) {
+        return $('<tr/>', { 'class': 'wxrisk-detailrow', 'data-detail': device.device_id })
+            .append($('<td/>', { colspan: 6, html: devicePopup(device) }));
     }
 
     // ----------------------------------------------------------------- map
@@ -1416,10 +1462,38 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         renderTable();
     });
 
-    // Spec section 14: clicking a row centres the map on that device.
+    /*
+     * Clicking a row expands the weather detail in place. It deliberately does
+     * NOT move the map: reading a device's forecast should not cost you the
+     * view you had set up. Use the crosshair button in the row to locate it.
+     */
     $root.on('click', 'tbody tr[data-device]', function () {
-        var id = $(this).attr('data-device');
-        var marker = state.markers[id];
+        var $row = $(this);
+        var id = $row.attr('data-device');
+
+        // Clicking the open row again closes it.
+        if (state.expandedDevice === id) {
+            state.expandedDevice = null;
+            $root.find('tr[data-detail]').remove();
+            return;
+        }
+
+        var device = null;
+        (state.payload ? state.payload.devices : []).forEach(function (d) {
+            if (String(d.device_id) === id) { device = d; }
+        });
+        if (! device) { return; }
+
+        state.expandedDevice = id;
+        $root.find('tr[data-detail]').remove();
+        $row.after(detailRow(device));
+    });
+
+    // Explicit locate: the only thing that moves the map from the table.
+    $root.on('click', '[data-locate]', function (event) {
+        event.stopPropagation();          // do not also toggle the detail row
+
+        var marker = state.markers[$(this).attr('data-locate')];
         var map = get_map(mapId);
         if (! marker || ! map) { return; }
 
