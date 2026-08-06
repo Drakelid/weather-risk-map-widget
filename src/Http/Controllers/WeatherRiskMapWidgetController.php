@@ -45,6 +45,12 @@ class WeatherRiskMapWidgetController extends WidgetController
             'clustering' => $config['clustering'] ?? true,
             'show_warnings' => $config['show_warnings'] ?? true,
             'map_mode' => $config['map_mode'] ?? 'auto',
+            // Left null so an unconfigured widget auto-fits its devices rather
+            // than jumping to an arbitrary place. LibreNMS's own configured
+            // centre is offered as the placeholder in the settings panel.
+            'init_lat' => null,
+            'init_lng' => null,
+            'init_zoom' => null,
             'hazards' => [],
             'thresholds' => [],
         ];
@@ -133,6 +139,13 @@ class WeatherRiskMapWidgetController extends WidgetController
             'radii' => WidgetSettings::ALLOWED_RADII,
             'refreshOptions' => WidgetSettings::ALLOWED_REFRESH,
             'thresholdDefaults' => (array) config('weather-risk-map.thresholds', []),
+            // Shown as placeholders so an operator has a sensible starting
+            // point without us imposing one.
+            'suggestedLat' => LibrenmsConfig::get('leaflet.default_lat'),
+            'suggestedLng' => LibrenmsConfig::get('leaflet.default_lng'),
+            'suggestedZoom' => LibrenmsConfig::get('leaflet.default_zoom'),
+            'minZoom' => WidgetSettings::MIN_ZOOM,
+            'maxZoom' => WidgetSettings::MAX_ZOOM,
         ]);
     }
 }

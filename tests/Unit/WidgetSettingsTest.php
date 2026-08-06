@@ -185,4 +185,103 @@ final class WidgetSettingsTest extends TestCase
 
         $this->assertSame(0, $settings->riskPeriod);
     }
+
+    // ------------------------------------------------------- map position
+
+    public function test_no_position_is_configured_by_default(): void
+    {
+        $settings = WidgetSettings::fromArray([], $this->config());
+
+        $this->assertNull($settings->initLat);
+        $this->assertNull($settings->initLng);
+        $this->assertNull($settings->initZoom);
+        $this->assertFalse($settings->hasFixedPosition(), 'must fall back to auto-fit');
+    }
+
+    public function test_a_valid_position_is_accepted(): void
+    {
+        $settings = WidgetSettings::fromArray([
+            'map_mode' => 'fixed',
+            'init_lat' => '59.9139',
+            'init_lng' => '10.7522',
+            'init_zoom' => '7.5',
+        ], $this->config());
+
+        $this->assertSame('fixed', $settings->mapMode);
+        $this->assertSame(59.9139, $settings->initLat);
+        $this->assertSame(10.7522, $settings->initLng);
+        $this->assertSame(7.5, $settings->initZoom);
+        $this->assertTrue($settings->hasFixedPosition());
+    }
+
+    public function test_out_of_range_coordinates_are_discarded_not_clamped(): void
+    {
+        // 500 is a typo, not a request for the pole. Dropping it makes the map
+        // auto-fit rather than jumping somewhere the user never chose.
+        $settings = WidgetSettings::fromArray([
+            'init_lat' => 500,
+            'init_lng' => -900,
+            'init_zoom' => 99,
+        ], $this->config());
+
+        $this->assertNull($settings->initLat);
+        $this->assertNull($settings->initLng);
+        $this->assertNull($settings->initZoom);
+    }
+
+    public function test_a_half_configured_position_is_not_usable(): void
+    {
+        $settings = WidgetSettings::fromArray([
+            'map_mode' => 'fixed',
+            'init_lat' => 59.9139,
+        ], $this->config());
+
+        $this->assertSame(59.9139, $settings->initLat);
+        $this->assertNull($settings->initLng);
+        $this->assertFalse($settings->hasFixedPosition());
+    }
+
+    public function test_non_numeric_position_values_are_ignored(): void
+    {
+        $settings = WidgetSettings::fromArray([
+            'init_lat' => 'here',
+            'init_lng' => '',
+            'init_zoom' => null,
+        ], $this->config());
+
+        $this->assertNull($settings->initLat);
+        $this->assertNull($settings->initLng);
+        $this->assertNull($settings->initZoom);
+    }
+
+    public function test_position_boundaries_are_inclusive(): void
+    {
+        $settings = WidgetSettings::fromArray([
+            'init_lat' => -90,
+            'init_lng' => 180,
+            'init_zoom' => WidgetSettings::MAX_ZOOM,
+        ], $this->config());
+
+        $this->assertSame(-90.0, $settings->initLat);
+        $this->assertSame(180.0, $settings->initLng);
+        $this->assertSame(WidgetSettings::MAX_ZOOM, $settings->initZoom);
+    }
+
+    public function test_an_unknown_map_mode_falls_back_to_the_default(): void
+    {
+        $this->assertSame('auto', WidgetSettings::fromArray(['map_mode' => 'teleport'], $this->config())->mapMode);
+        $this->assertSame('remember', WidgetSettings::fromArray(['map_mode' => 'remember'], $this->config())->mapMode);
+    }
+
+    public function test_position_is_exposed_to_the_view(): void
+    {
+        $array = WidgetSettings::fromArray([
+            'init_lat' => 59.9139, 'init_lng' => 10.7522, 'init_zoom' => 8,
+        ], $this->config())->toArray();
+
+        $this->assertSame(59.9139, $array['init_lat']);
+        $this->assertSame(10.7522, $array['init_lng']);
+        $this->assertSame(8.0, $array['init_zoom']);
+        $this->assertTrue($array['has_fixed_position']);
+    }
 }

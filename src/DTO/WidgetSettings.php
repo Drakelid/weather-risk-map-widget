@@ -26,6 +26,12 @@ final class WidgetSettings
      * @param  array<string, bool>  $hazards
      * @param  array<string, mixed>  $thresholds
      */
+    public const ALLOWED_MAP_MODES = ['auto', 'fixed', 'remember'];
+
+    public const MIN_ZOOM = 1.0;
+
+    public const MAX_ZOOM = 19.0;
+
     private function __construct(
         public readonly ?string $title,
         public readonly array $deviceGroups,
@@ -36,9 +42,24 @@ final class WidgetSettings
         public readonly bool $clustering,
         public readonly bool $showWarnings,
         public readonly string $mapMode,
+        public readonly ?float $initLat,
+        public readonly ?float $initLng,
+        public readonly ?float $initZoom,
         public readonly array $hazards,
         public readonly array $thresholds,
     ) {}
+
+    /**
+     * Whether a usable fixed starting position was configured.
+     *
+     * Both coordinates are required: a latitude without a longitude cannot
+     * position anything, and silently defaulting the other half would drop the
+     * user somewhere they never asked for. The view falls back to auto-fit.
+     */
+    public function hasFixedPosition(): bool
+    {
+        return $this->initLat !== null && $this->initLng !== null;
+    }
 
     /**
      * @param  array<string, mixed>  $raw  values straight from the widget row / request
@@ -58,7 +79,12 @@ final class WidgetSettings
             weatherRadiusKm: self::oneOf((int) ($raw['weather_radius_km'] ?? $defaults['weather_radius_km'] ?? 10), self::ALLOWED_RADII, 10),
             clustering: self::bool($raw['clustering'] ?? $defaults['clustering'] ?? true),
             showWarnings: self::bool($raw['show_warnings'] ?? $defaults['show_warnings'] ?? true),
-            mapMode: in_array($raw['map_mode'] ?? null, ['auto', 'remember'], true) ? $raw['map_mode'] : ($defaults['map_mode'] ?? 'auto'),
+            mapMode: in_array($raw['map_mode'] ?? null, self::ALLOWED_MAP_MODES, true)
+                ? $raw['map_mode']
+                : ($defaults['map_mode'] ?? 'auto'),
+            initLat: self::floatInRange($raw['init_lat'] ?? null, -90.0, 90.0),
+            initLng: self::floatInRange($raw['init_lng'] ?? null, -180.0, 180.0),
+            initZoom: self::floatInRange($raw['init_zoom'] ?? null, self::MIN_ZOOM, self::MAX_ZOOM),
             hazards: self::hazards($raw['hazards'] ?? null),
             thresholds: self::thresholds($raw['thresholds'] ?? null, $config['thresholds'] ?? []),
         );
@@ -92,9 +118,35 @@ final class WidgetSettings
             'clustering' => $this->clustering,
             'show_warnings' => $this->showWarnings,
             'map_mode' => $this->mapMode,
+            'init_lat' => $this->initLat,
+            'init_lng' => $this->initLng,
+            'init_zoom' => $this->initZoom,
+            'has_fixed_position' => $this->hasFixedPosition(),
             'hazards' => $this->hazards,
             'thresholds' => $this->thresholds,
         ];
+    }
+
+    /**
+     * Coerce to a float inside an inclusive range, or null.
+     *
+     * Returns null rather than clamping: a latitude of 500 is a mistake, not a
+     * request for the north pole, and null makes the view fall back to
+     * auto-fitting the devices instead of positioning somewhere arbitrary.
+     */
+    private static function floatInRange(mixed $value, float $min, float $max): ?float
+    {
+        if ($value === null || $value === '' || ! is_numeric($value)) {
+            return null;
+        }
+
+        $float = (float) $value;
+
+        if (! is_finite($float) || $float < $min || $float > $max) {
+            return null;
+        }
+
+        return $float;
     }
 
     /**
