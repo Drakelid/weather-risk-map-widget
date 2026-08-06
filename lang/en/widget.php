@@ -39,6 +39,7 @@ return [
     'active_now' => 'NOW',
     'upcoming' => 'Later',
     'no_geometry' => 'No map area published for this warning',
+    'show_on_map' => 'Show this area on the map',
     'legend' => 'Legend',
     'legend_down' => 'Device down in LibreNMS',
     'legend_hint' => 'Marker colour is weather risk; the border shows LibreNMS status.',

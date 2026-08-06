@@ -63,6 +63,7 @@
             </button>
         </div>
         <div class="wxrisk-strip" data-role="warning-cards"></div>
+        <div class="wxrisk-wdetail wx-hidden" data-role="warning-detail"></div>
     </div>
 
     {{-- ------------------------------------------------------------- map --}}
@@ -274,7 +275,19 @@ html.dark .wxrisk-widget {
 .wxrisk-widget .wxrisk-strip.has-selection .wxrisk-wcard.is-selected {
     opacity: 1; box-shadow: 0 0 0 2px currentColor inset;
 }
-.wxrisk-widget .wxrisk-wcard.is-flat { cursor: default; }
+/* No map area published: still readable, just not locatable. */
+.wxrisk-widget .wxrisk-wcard.is-flat { border-left-style: dashed; }
+
+/* Selected warning's full text, shown in place instead of on the map. */
+.wxrisk-widget .wxrisk-wdetail {
+    margin-top: 6px; padding: 8px 10px;
+    background: var(--wx-surface);
+    border: 1px solid var(--wx-border); border-radius: 3px;
+    max-height: 190px; overflow-y: auto;
+}
+.wxrisk-widget .wxrisk-wdetail .wxrisk-popup { max-width: none; min-width: 0; }
+.wxrisk-widget .wxrisk-wdetail .wxrisk-popup .wxrisk-scroll { max-height: none; overflow: visible; }
+.wxrisk-widget .wxrisk-wdetail .wxrisk-kv { max-width: 340px; }
 .wxrisk-widget .wxrisk-wcard-top {
     display: flex; align-items: center; gap: 5px;
     font-size: 13px; font-weight: 600; line-height: 1.4;
@@ -368,6 +381,43 @@ html.dark .wxrisk-marker.is-down { border-color: #000; }
 .wxrisk-marker.is-extreme { box-shadow: 0 0 0 3px color-mix(in srgb, var(--wx-extreme) 45%, transparent), 0 0 6px rgba(0,0,0,.5); }
 /* Devices inside the selected warning. */
 .wxrisk-marker.is-highlit { box-shadow: 0 0 0 3px #fff, 0 0 0 5px #111; }
+
+/*
+ * The explicitly selected device.
+ *
+ * Since selecting no longer moves the map, the marker has to be findable
+ * without it. A pulsing ring reads at a glance across a wall display, where a
+ * static colour change of a 14px dot does not.
+ */
+.wxrisk-marker.is-selected {
+    box-shadow: 0 0 0 3px #fff, 0 0 0 6px #111;
+    animation: wxrisk-pulse 1.4s ease-out infinite;
+}
+html.dark .wxrisk-marker.is-selected { box-shadow: 0 0 0 3px #111, 0 0 0 6px #fff; }
+
+/* A selection hidden inside a cluster: the cluster pulses in its place. */
+.wxrisk-cluster.is-selected { animation: wxrisk-pulse 1.4s ease-out infinite; }
+
+@keyframes wxrisk-pulse {
+    0%   { outline: 0 solid rgba(255,255,255,.75); outline-offset: 0; }
+    70%  { outline: 9px solid rgba(255,255,255,0); outline-offset: 2px; }
+    100% { outline: 0 solid rgba(255,255,255,0); outline-offset: 0; }
+}
+
+/* Pulsing outline around the selected warning area. */
+.wxrisk-map .wxrisk-halo { animation: wxrisk-halo-pulse 1.8s ease-in-out infinite; }
+@keyframes wxrisk-halo-pulse {
+    0%, 100% { stroke-opacity: .15; }
+    50%      { stroke-opacity: .55; }
+}
+
+/* Respect a reduced-motion preference; the static ring still identifies it. */
+@media (prefers-reduced-motion: reduce) {
+    .wxrisk-marker.is-selected,
+    .wxrisk-cluster.is-selected,
+    .wxrisk-map .wxrisk-halo { animation: none; }
+    .wxrisk-map .wxrisk-halo { stroke-opacity: .45; }
+}
 
 .wxrisk-cluster {
     border-radius: 50%; color: #fff; font-weight: 700; font-size: 13px;
@@ -474,6 +524,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         cluster: null,
         warningLayers: {},         // warning id -> [L.Polygon]
         polygonLayer: null,
+        haloLayer: null,
         selectedWarning: null,
         showWarnings: settings.show_warnings !== false,
         showLegend: false,
@@ -703,6 +754,8 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         $strip.toggleClass('has-selection', state.selectedWarning !== null);
         $root.find('[data-role="clear-selection"]').toggleClass('wx-hidden', state.selectedWarning === null);
+
+        renderWarningDetail();
     }
 
     /** Bounds covering every polygon of one warning, or of all warnings. */
@@ -729,25 +782,97 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         return bounds;
     }
 
+    /**
+     * Select a warning to read it.
+     *
+     * Deliberately does NOT move the map. Selecting a warning to find out what
+     * it says should not cost the operator the view they had set up; the map
+     * only changes emphasis, and the toolbar's zoom-to-warnings button remains
+     * for when moving there is actually what you want.
+     */
     function selectWarning(warningId) {
-        var map = get_map(mapId);
-        if (! map) { return; }
-
         // Clicking the selected card again clears the selection.
         state.selectedWarning = (state.selectedWarning === warningId) ? null : warningId;
 
         applyWarningEmphasis();
         renderWarnings();
         renderMarkers();
+    }
 
-        if (state.selectedWarning) {
-            var bounds = warningBounds(state.selectedWarning);
-            if (bounds && bounds.isValid()) {
-                map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });
-            }
-            var layers = state.warningLayers[state.selectedWarning];
-            if (layers && layers.length) { layers[0].openPopup(); }
+    /** Find a warning in the current payload by id. */
+    function warningById(id) {
+        var found = null;
+        (state.payload ? state.payload.warnings : []).forEach(function (w) {
+            if (w.id === id) { found = w; }
+        });
+        return found;
+    }
+
+    /** Full text of the selected warning, shown in place rather than on the map. */
+    function renderWarningDetail() {
+        var $panel = $root.find('[data-role="warning-detail"]');
+        var warning = state.selectedWarning ? warningById(state.selectedWarning) : null;
+
+        if (! warning) {
+            $panel.addClass('wx-hidden').empty();
+            return;
         }
+
+        var locatable = (warning.polygons || []).length > 0;
+
+        // Explicit, never automatic: the halo says where it is, this goes there.
+        $panel.removeClass('wx-hidden').html(
+            warningPopup(warning)
+            + (locatable
+                ? '<button type="button" class="wxrisk-linkbtn wxrisk-showon" data-locate-warning="'
+                  + esc(warning.id) + '">' + esc(t('show_on_map')) + '</button>'
+                : '<span class="wxrisk-muted">' + esc(t('no_geometry')) + '</span>')
+        );
+    }
+
+
+    /**
+     * Draw a thick pulsing outline around the selected warning.
+     *
+     * Dimming the others tells you which one is selected but not where it is;
+     * a halo makes it findable at a glance. It is a separate non-interactive
+     * layer rather than a restyle of the polygon itself, so clicks, tooltips
+     * and the crisp boundary stroke are all unaffected.
+     */
+    function updateWarningHalo() {
+        var map = get_map(mapId);
+        if (! map) { return; }
+
+        if (state.haloLayer) {
+            map.removeLayer(state.haloLayer);
+            state.haloLayer = null;
+        }
+
+        if (! state.selectedWarning || ! state.showWarnings) { return; }
+
+        var layers = state.warningLayers[state.selectedWarning];
+        if (! layers || ! layers.length) { return; }
+
+        var warning = warningById(state.selectedWarning);
+        var colour = warning ? levelMeta(warning.risk).color : '#fff';
+
+        var halos = layers.map(function (layer) {
+            return L.polygon(layer.getLatLngs(), {
+                color: colour,
+                weight: 10,
+                opacity: 0.35,
+                fill: false,
+                interactive: false,      // never steals a click from the polygon
+                className: 'wxrisk-halo'
+            });
+        });
+
+        state.haloLayer = L.layerGroup(halos).addTo(map);
+
+        // Halo underneath, crisp boundary on top.
+        layers.forEach(function (layer) {
+            if (layer.bringToFront) { layer.bringToFront(); }
+        });
     }
 
     /** Fade unselected warning areas so the selected one reads clearly. */
@@ -764,6 +889,8 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 if (state.selectedWarning === id && layer.bringToFront) { layer.bringToFront(); }
             });
         });
+
+        updateWarningHalo();
     }
 
     // ------------------------------------------------------------ rendering
@@ -872,11 +999,16 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         var $body = $root.find('[data-role="rows"]').empty();
         var rows = visibleDevices().filter(function (d) { return d.risk >= 2; });
 
-        // When a warning is selected the table narrows to its devices, so the
-        // strip, the map and the table always describe the same thing.
+        // When a locatable warning is selected the table narrows to its
+        // devices, so strip, map and table describe the same thing. A warning
+        // published without geometry matches no device, so filtering on it
+        // would blank the table for no useful reason.
         if (state.selectedWarning) {
-            var ids = affectedDeviceIds(state.selectedWarning);
-            rows = rows.filter(function (d) { return ids.indexOf(d.device_id) !== -1; });
+            var selected = warningById(state.selectedWarning);
+            if (selected && (selected.polygons || []).length) {
+                var ids = affectedDeviceIds(state.selectedWarning);
+                rows = rows.filter(function (d) { return ids.indexOf(d.device_id) !== -1; });
+            }
         }
 
         if (! rows.length) {
@@ -949,15 +1081,17 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     // ----------------------------------------------------------------- map
 
-    function deviceIcon(device, highlit) {
+    function deviceIcon(device, highlit, selected) {
         var meta = levelMeta(device.risk);
         var size = device.risk >= 3 ? 18 : 14;
+        if (selected) { size += 4; }        // the selected device reads first
         var classes = 'wxrisk-marker'
             + (device.up ? '' : ' is-down')
             + (device.disabled ? ' is-disabled' : '')
             + (device.risk === 4 ? ' is-severe' : '')
             + (device.risk === 5 ? ' is-extreme' : '')
-            + (highlit ? ' is-highlit' : '');
+            + (highlit ? ' is-highlit' : '')
+            + (selected ? ' is-selected' : '');
 
         return L.divIcon({
             className: '',
@@ -1184,12 +1318,17 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         var markers = devices.map(function (device) {
             var isHighlit = highlit.indexOf(device.device_id) !== -1;
+            var isSelected = state.expandedDevice === String(device.device_id);
             var marker = L.marker([device.lat, device.lng], {
-                icon: deviceIcon(device, isHighlit),
+                icon: deviceIcon(device, isHighlit, isSelected),
                 title: device.display_name,
-                // Worse weather draws on top of calmer neighbours. Also read
-                // back by the cluster icon builder to find the worst child.
-                zIndexOffset: device.risk * 1000
+                // Worse weather draws on top of calmer neighbours; the selected
+                // device outranks everything.
+                zIndexOffset: isSelected ? 100000 : device.risk * 1000,
+                // Carried explicitly rather than derived from zIndexOffset:
+                // the cluster icon needs the real risk, and overloading the
+                // z-index for selection would otherwise corrupt its colour.
+                wxRisk: device.risk
             });
             marker.bindPopup(devicePopup(device), { maxWidth: 320 });
             state.markers[device.device_id] = marker;
@@ -1206,13 +1345,18 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 iconCreateFunction: function (cluster) {
                     var children = cluster.getAllChildMarkers();
                     var worst = 0;
+                    var holdsSelected = false;
                     for (var i = 0; i < children.length; i++) {
-                        worst = Math.max(worst, children[i].options.zIndexOffset / 1000);
+                        worst = Math.max(worst, children[i].options.wxRisk || 0);
+                        if (children[i].options.zIndexOffset === 100000) { holdsSelected = true; }
                     }
                     var meta = levelMeta(worst);
                     var size = worst >= 3 ? 40 : 34;
+                    // A clustered selection would otherwise be invisible, so
+                    // the cluster hiding it pulses in its place.
                     return L.divIcon({
-                        html: '<div class="wxrisk-cluster" style="width:' + size + 'px;height:' + size
+                        html: '<div class="wxrisk-cluster' + (holdsSelected ? ' is-selected' : '')
+                              + '" style="width:' + size + 'px;height:' + size
                               + 'px;background:' + meta.color + '">' + cluster.getChildCount() + '</div>',
                         className: '',
                         iconSize: L.point(size, size)
@@ -1421,15 +1565,25 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     });
 
     $root.on('click', '[data-warning]', function () {
-        var id = $(this).attr('data-warning');
-        if ($(this).hasClass('is-flat')) { return; }   // no geometry to fly to
-        selectWarning(id);
+        // Warnings published without geometry are selectable too now: there is
+        // nothing to fly to, but their text is still worth reading.
+        selectWarning($(this).attr('data-warning'));
         renderTable();
+    });
+
+    $root.on('click', '[data-locate-warning]', function (event) {
+        event.stopPropagation();
+
+        var map = get_map(mapId);
+        var bounds = warningBounds($(this).attr('data-locate-warning'));
+        if (map && bounds && bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });
+        }
     });
 
     $root.on('click', '[data-role="clear-selection"]', function () {
         state.selectedWarning = null;
-        applyWarningEmphasis();
+        applyWarningEmphasis();      // also removes the halo
         renderWarnings();
         renderMarkers();
         renderTable();
@@ -1475,6 +1629,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         if (state.expandedDevice === id) {
             state.expandedDevice = null;
             $root.find('tr[data-detail]').remove();
+            renderMarkers();
             return;
         }
 
@@ -1487,6 +1642,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         state.expandedDevice = id;
         $root.find('tr[data-detail]').remove();
         $row.after(detailRow(device));
+        renderMarkers();          // highlight it on the map, without moving there
     });
 
     // Explicit locate: the only thing that moves the map from the table.
@@ -1590,6 +1746,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                         state.markers = {};
                         state.cluster = null;
                         state.polygonLayer = null;
+                        state.haloLayer = null;
                         state.warningLayers = {};
                         destroy_map(mapId);
                     });
