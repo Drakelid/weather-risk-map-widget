@@ -4,6 +4,7 @@ namespace LibreNMS\Plugins\WeatherRiskMap\Console;
 
 use App\Models\Device;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Route;
 use LibreNMS\Plugins\WeatherRiskMap\DTO\Coordinate;
 use LibreNMS\Plugins\WeatherRiskMap\Services\WeatherGeoService;
 use LibreNMS\Plugins\WeatherRiskMap\Services\WeatherRiskMapFactory;
@@ -23,6 +24,49 @@ class DiagnoseCommand extends Command
 
     protected $description = 'Check device coordinates, weather provider connectivity and request volume';
 
+    /**
+     * Verify the widget will actually appear in the Add Widget menu.
+     *
+     * DashboardController::listWidgets() selects widgets with an exact string
+     * comparison on the route prefix. A route can therefore be registered, be
+     * visible in `route:list`, resolve correctly when called - and still never
+     * appear in the UI, because its prefix string is "/ajax/dash" rather than
+     * "ajax/dash". That failure is invisible without this check.
+     *
+     * listWidgets() itself cannot be called here: it instantiates every widget
+     * controller and calls getTitle(), and core's ServerStatsController queries
+     * Device::hasAccess(request()->user()), which is null on the CLI. So the
+     * same filter is reproduced directly against the route table.
+     */
+    private function checkWidgetDiscoverable(): bool
+    {
+        $route = collect(Route::getRoutes())
+            ->first(fn ($r) => str_ends_with($r->uri(), 'ajax/dash/weather-risk-map'));
+
+        if ($route === null) {
+            $this->error('  ! Route not registered at all.');
+            $this->error('    Run: php artisan route:clear   (loadRoutesFrom is skipped when routes are cached)');
+
+            return false;
+        }
+
+        $prefix = (string) $route->getPrefix();
+
+        if ($prefix !== 'ajax/dash') {
+            $this->error('  ! Route prefix is "' . $prefix . '", expected exactly "ajax/dash".');
+            $this->error('    The widget will NOT appear in the Add Widget menu.');
+            $this->error('    routes/web.php must nest prefix("ajax") then prefix("dash") - see the note there.');
+
+            return false;
+        }
+
+        $this->line('  Route      : OK (' . $route->uri() . ')');
+        $this->line('  Prefix     : OK ("ajax/dash" - matches listWidgets())');
+        $this->line('  Add Widget : "' . __('weather-risk-map::widget.title') . '"');
+
+        return true;
+    }
+
     public function handle(WeatherRiskMapFactory $factory): int
     {
         $this->info('Weather Risk Map diagnostics');
@@ -41,6 +85,14 @@ class DiagnoseCommand extends Command
         if (str_contains($userAgent, 'set WEATHER_RISK_MAP_USER_AGENT')) {
             $this->warn('  ! User-Agent is still the placeholder. MET Norway requires a real contact');
             $this->warn('    email and will answer 403 without one. Set WEATHER_RISK_MAP_USER_AGENT.');
+            $failed = true;
+        }
+        $this->line('');
+
+        // ----------------------------------------------- widget registration
+        $this->line('<comment>Widget registration</comment>');
+
+        if (! $this->checkWidgetDiscoverable()) {
             $failed = true;
         }
         $this->line('');

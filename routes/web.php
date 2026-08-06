@@ -17,9 +17,29 @@ use LibreNMS\Plugins\WeatherRiskMap\Http\Controllers\WeatherRiskMapWidgetControl
  * librenms/routes/web.php: web session handling plus 'auth'.
  */
 Route::middleware(['web', 'auth'])->group(function (): void {
-    Route::prefix('ajax/dash')->group(function (): void {
-        Route::post('weather-risk-map', WeatherRiskMapWidgetController::class)
-            ->name('widget.weather-risk-map');
+    /*
+     * The two nested prefix() calls are REQUIRED. Do not collapse them into a
+     * single ->prefix('ajax/dash').
+     *
+     * listWidgets() compares with an exact string match:
+     *
+     *     $route->getPrefix() === 'ajax/dash'
+     *
+     * Laravel builds that string in RouteGroup::formatPrefix() as
+     * `trim($old, '/') . '/' . trim($new, '/')`. With one prefix level there is
+     * no parent prefix, so $old is '' and the result is "/ajax/dash" - with a
+     * leading slash, which fails the comparison and silently removes the widget
+     * from the Add Widget menu. Nesting a second level makes trim() strip that
+     * slash, producing "ajax/dash" exactly as core's own widget group does.
+     *
+     * The route URI is trimmed separately, so `route:list` looks correct either
+     * way. Only the prefix differs, which makes this failure easy to misread.
+     */
+    Route::prefix('ajax')->group(function (): void {
+        Route::prefix('dash')->group(function (): void {
+            Route::post('weather-risk-map', WeatherRiskMapWidgetController::class)
+                ->name('widget.weather-risk-map');
+        });
     });
 
     /*
