@@ -193,9 +193,12 @@ final class WeatherRiskServiceTest extends TestCase
 
     public function test_accumulated_rain_triggers_even_without_an_intense_hour(): void
     {
+        // 8 h x 3.5 mm = 28 mm. Every hour is under the 4.0 mm/h moderate
+        // threshold, so only the accumulated total (moderate 20, high 40) can
+        // raise this - which is the point of scoring accumulation separately.
         $points = [];
-        for ($i = 1; $i <= 12; $i++) {
-            $points[] = $this->point(['precipitation' => 3.5], $i);  // below the hourly threshold
+        for ($i = 1; $i <= 8; $i++) {
+            $points[] = $this->point(['precipitation' => 3.5], $i);
         }
 
         $result = $this->service()->assess(
@@ -205,6 +208,21 @@ final class WeatherRiskServiceTest extends TestCase
         $this->assertArrayHasKey('rain', $result);
         $this->assertSame(RiskLevel::Moderate, $result['rain']->risk);
         $this->assertStringContainsString('total', $result['rain']->detail);
+    }
+
+    public function test_accumulated_rain_escalates_with_the_total(): void
+    {
+        // 16 h x 3.5 mm = 56 mm, still with no intense hour, crosses into High.
+        $points = [];
+        for ($i = 1; $i <= 16; $i++) {
+            $points[] = $this->point(['precipitation' => 3.5], $i);
+        }
+
+        $result = $this->service()->assess(
+            $this->forecast($points), [], $this->now, 24, $this->allHazards()
+        );
+
+        $this->assertSame(RiskLevel::High, $result['rain']->risk);
     }
 
     // ------------------------------------------------------ official warnings

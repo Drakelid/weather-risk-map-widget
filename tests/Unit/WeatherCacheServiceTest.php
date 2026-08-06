@@ -3,6 +3,7 @@
 namespace LibreNMS\Plugins\WeatherRiskMap\Tests\Unit;
 
 use LibreNMS\Plugins\WeatherRiskMap\Services\WeatherCacheService;
+use LibreNMS\Plugins\WeatherRiskMap\Tests\Support\ArrayCacheStub;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
 use RuntimeException;
