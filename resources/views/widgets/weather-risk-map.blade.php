@@ -1780,12 +1780,19 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         return b ? [b.south, b.west, b.north, b.east].join(',') : '';
     }
 
-    /**
-     * @param {{rebuildPolygons: boolean, fit: boolean}} options
+    /*
+     * options.rebuildPolygons - recreate the warning layers
+     * options.fit             - allow auto-fit to move the view
      *
      * Polygons are only rebuilt when something actually changed which warnings
      * are drawn. Rebuilding on selection would destroy the very layer the user
      * just clicked, out from under Leaflet's own click handling.
+     *
+     * NB: never write a JSDoc brace-type annotation in this file. Blade treats
+     * a doubled opening brace as an echo and compiles whatever follows as PHP,
+     * so such a comment takes the whole widget down with a parse error - even
+     * inside a JavaScript comment, because Blade runs before the browser ever
+     * sees it.
      */
     function renderMap(options) {
         if (options.rebuildPolygons) { renderPolygons(); }
