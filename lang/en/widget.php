@@ -29,6 +29,24 @@ return [
     'no_devices' => 'No devices with valid GPS coordinates match the current filter.',
     'loading' => 'Loading weather risk data...',
 
+    // Warning strip / map controls
+    'warnings_heading' => 'Official warnings',
+    'no_warnings' => 'No official warnings in force for the selected period.',
+    'devices_affected' => ':count devices',
+    'one_device_affected' => '1 device',
+    'no_devices_affected' => 'no devices',
+    'active_now' => 'NOW',
+    'upcoming' => 'Later',
+    'no_geometry' => 'No map area published for this warning',
+    'legend' => 'Legend',
+    'legend_down' => 'Device down in LibreNMS',
+    'legend_hint' => 'Marker colour is weather risk; the border shows LibreNMS status.',
+    'fit_devices' => 'Zoom to devices',
+    'fit_warnings' => 'Zoom to warnings',
+    'toggle_warnings' => 'Show/hide warning areas',
+    'clear_selection' => 'Clear selection',
+    'show_all' => 'Show all',
+
     'table' => [
         'risk' => 'Risk',
         'device' => 'Device',
