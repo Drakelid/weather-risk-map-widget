@@ -112,10 +112,11 @@
             <div class="wxrisk-legend-hint">{{ __('weather-risk-map::widget.legend_hint') }}</div>
         </div>
 
-        {{-- Warning detail floats OVER the map. In the layout flow it stole
+        {{-- Shared detail panel for anything clicked on the map, warning
+             area or device. It floats OVER the map: in the layout flow it stole
              height from the map pane (flex:1), which read as the map
-             "minimising" every time a warning was selected. --}}
-        <div class="wxrisk-wdetail wx-hidden" data-role="warning-detail"></div>
+             "minimising" on every selection. --}}
+        <div class="wxrisk-wdetail wx-hidden" data-role="detail"></div>
 
         <div class="wxrisk-overlay" data-role="overlay">
             <span data-role="overlay-text">{{ __('weather-risk-map::widget.loading') }}</span>
@@ -473,13 +474,11 @@ html.dark .wxrisk-widget .wxrisk-when.is-now { color: #1a1a1a; }
    column survives a colour-vision deficiency and greyscale printing. */
 .wxrisk-widget .wxrisk-risklabel { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 
-.wxrisk-widget .wxrisk-detailrow > td {
-    background: var(--wx-surface); padding: 8px 12px; cursor: default; border-top: 0;
+/* The selected row, mirroring the pulsing marker on the map. */
+.wxrisk-widget .wxrisk-table tbody tr.is-selected {
+    background: var(--wx-surface-hover);
+    box-shadow: inset 3px 0 0 currentColor;
 }
-.wxrisk-widget .wxrisk-detailrow .wxrisk-popup { max-width: none; min-width: 0; }
-.wxrisk-widget .wxrisk-detailrow .wxrisk-popup .wxrisk-scroll { max-height: none; }
-.wxrisk-widget .wxrisk-detailrow .wxrisk-popup h4 { font-size: 13.5px; }
-.wxrisk-widget .wxrisk-detailrow .wxrisk-kv { max-width: 320px; }
 
 .wxrisk-widget .wxrisk-locate {
     background: none; border: 0; padding: 0 2px; margin-left: 3px;
@@ -646,6 +645,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         haloLayer: null,
         selectedWarning: null,
         expandedDevice: null,
+        detail: null,           // {type: 'warning'|'device', id} - what the panel shows
         showWarnings: settings.show_warnings !== false,
         showLegend: false,
         tableOpen: true,
@@ -924,7 +924,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             $strip.append($('<div/>', { 'class': 'wxrisk-nowarn', text: t('no_warnings') }));
             $root.find('[data-role="warnings-more"]').addClass('wx-hidden');
             $root.find('.wxrisk-stripwrap').removeClass('has-overflow');
-            renderWarningDetail();
+            renderDetail();
             return;
         }
 
@@ -977,7 +977,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         });
 
         $strip.toggleClass('has-selection', state.selectedWarning !== null);
-        renderWarningDetail();
+        renderDetail();
         updateStripOverflow();
     }
 
@@ -1037,15 +1037,19 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
      * changes emphasis only; the toolbar and the detail panel's button remain
      * for when going there is actually what you want.
      */
+    /* The legend occupies the same corner as the detail panel. */
+    function hideLegend() {
+        if (! state.showLegend) { return; }
+        state.showLegend = false;
+        $root.find('[data-role="legend"]').addClass('wx-hidden');
+        $root.find('[data-action="toggle-legend"]').attr('aria-pressed', 'false');
+    }
+
     function selectWarning(warningId) {
         state.selectedWarning = (state.selectedWarning === warningId) ? null : warningId;
+        state.detail = state.selectedWarning ? { type: 'warning', id: state.selectedWarning } : null;
 
-        // Both are bottom-left overlays; showing one hides the other.
-        if (state.selectedWarning && state.showLegend) {
-            state.showLegend = false;
-            $root.find('[data-role="legend"]').addClass('wx-hidden');
-            $root.find('[data-action="toggle-legend"]').attr('aria-pressed', 'false');
-        }
+        if (state.detail) { hideLegend(); }
 
         // Restyle the existing layers rather than rebuilding them: the click
         // that got us here is still being handled by one of them.
@@ -1053,28 +1057,69 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         render({ rebuildPolygons: false });
     }
 
-    function renderWarningDetail() {
-        var $panel = $root.find('[data-role="warning-detail"]');
-        var warning = state.selectedWarning ? warningById(state.selectedWarning) : null;
+    /**
+     * Devices open in the same overlay as warnings.
+     *
+     * Everything clicked on the map reports into one panel, so there is exactly
+     * one place to look and never two cards describing the same thing.
+     */
+    function selectDevice(deviceId) {
+        var id = String(deviceId);
+        state.expandedDevice = (state.expandedDevice === id) ? null : id;
+        state.detail = state.expandedDevice ? { type: 'device', id: state.expandedDevice } : null;
 
-        if (! warning) {
-            $panel.addClass('wx-hidden').empty();
+        if (state.detail) { hideLegend(); }
+        render({ rebuildPolygons: false });
+    }
+
+    function closeDetail() {
+        if (state.detail && state.detail.type === 'warning') {
+            state.selectedWarning = null;
+            applyWarningEmphasis();
+        }
+        if (state.detail && state.detail.type === 'device') {
+            state.expandedDevice = null;
+        }
+        state.detail = null;
+        render({ rebuildPolygons: false });
+    }
+
+    function renderDetail() {
+        var $panel = $root.find('[data-role="detail"]');
+        var detail = state.detail;
+
+        var closeBtn = '<button type="button" class="wxrisk-wdetail-close" data-role="close-detail" '
+                     + 'aria-label="' + esc(t('clear_selection')) + '">&times;</button>';
+
+        if (detail && detail.type === 'warning') {
+            var warning = warningById(detail.id);
+            if (! warning) { $panel.addClass('wx-hidden').empty(); return; }
+
+            var locatable = (warning.polygons || []).length > 0;
+
+            $panel.removeClass('wx-hidden')
+                .css('color', levelMeta(warning.risk).color)      // drives border-left
+                .html(closeBtn + warningPopup(warning)
+                    + (locatable
+                        ? '<button type="button" class="wxrisk-linkbtn" data-locate-warning="'
+                          + esc(warning.id) + '">' + esc(t('show_on_map')) + '</button>'
+                        : '<span class="wxrisk-muted">' + esc(t('no_geometry')) + '</span>'));
             return;
         }
 
-        var locatable = (warning.polygons || []).length > 0;
+        if (detail && detail.type === 'device') {
+            var device = deviceById(detail.id);
+            if (! device) { $panel.addClass('wx-hidden').empty(); return; }
 
-        $panel.removeClass('wx-hidden')
-            .css('color', levelMeta(warning.risk).color)      // drives border-left
-            .html(
-                '<button type="button" class="wxrisk-wdetail-close" data-role="close-detail" '
-                + 'aria-label="' + esc(t('clear_selection')) + '">&times;</button>'
-                + warningPopup(warning)
-                + (locatable
-                    ? '<button type="button" class="wxrisk-linkbtn" data-locate-warning="'
-                      + esc(warning.id) + '">' + esc(t('show_on_map')) + '</button>'
-                    : '<span class="wxrisk-muted">' + esc(t('no_geometry')) + '</span>')
-            );
+            $panel.removeClass('wx-hidden')
+                .css('color', levelMeta(effectiveRisk(device)).color)
+                .html(closeBtn + devicePopup(device)
+                    + '<button type="button" class="wxrisk-linkbtn" data-locate="'
+                    + device.device_id + '">' + esc(t('show_on_map')) + '</button>');
+            return;
+        }
+
+        $panel.addClass('wx-hidden').empty();
     }
 
     /**
@@ -1401,10 +1446,11 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             var expanded = state.expandedDevice === String(device.device_id);
 
             var $tr = $('<tr/>', {
+                'class': expanded ? 'is-selected' : '',
                 'data-device': device.device_id,
                 'tabindex': 0,
                 'role': 'button',
-                'aria-expanded': expanded ? 'true' : 'false'
+                'aria-pressed': expanded ? 'true' : 'false'
             });
 
             $tr.append($('<td/>', { html: riskLabel(meta) }));
@@ -1424,16 +1470,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             $tr.append($('<td/>', { text: fmtTime(hazard.peak_time) || '' }));
 
             $body.append($tr);
-
-            // Re-open whatever was expanded before the refresh, so a reload
-            // does not close what the operator was reading.
-            if (expanded) { $body.append(detailRow(device)); }
         });
-    }
-
-    function detailRow(device) {
-        return $('<tr/>', { 'class': 'wxrisk-detailrow', 'data-detail': device.device_id })
-            .append($('<td/>', { colspan: 6, html: devicePopup(device) }));
     }
 
     // ----------------------------------------------------------------- map
@@ -1679,7 +1716,10 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 wxRisk: effectiveRisk(device),
                 wxSelected: isSelected
             });
-            marker.bindPopup(devicePopup(device), { maxWidth: 320, autoPan: false });
+            // No bindPopup: a Leaflet popup here would be a second card
+            // showing what the detail panel already shows, and it would cover
+            // the map. Everything clicked reports into the one panel.
+            marker.on('click', function () { selectDevice(device.device_id); });
             state.markers[device.device_id] = marker;
             return marker;
         });
@@ -1891,6 +1931,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         renderHazardToggles();
         renderFilters();
         renderWarnings();
+        renderDetail();
         renderTable();
         renderMap(options);
         applyDensity();
@@ -1928,6 +1969,11 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                 if (state.expandedDevice
                     && ! (data.devices || []).some(function (d) { return String(d.device_id) === state.expandedDevice; })) {
                     state.expandedDevice = null;
+                }
+                if (state.detail
+                    && ((state.detail.type === 'warning' && ! state.selectedWarning)
+                        || (state.detail.type === 'device' && ! state.expandedDevice))) {
+                    state.detail = null;
                 }
 
                 state.payload = data;
@@ -1987,9 +2033,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     $root.on('click', '[data-role="close-detail"]', function (event) {
         event.stopPropagation();
-        state.selectedWarning = null;
-        applyWarningEmphasis();
-        render({ rebuildPolygons: false });
+        closeDetail();
     });
 
     $root.on('click', '[data-locate-warning]', function (event) {
@@ -2022,26 +2066,26 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
      * you had set up. The crosshair button in the row locates it explicitly.
      */
     $root.on('click', 'tbody tr[data-device]', function () {
-        var id = $(this).attr('data-device');
-        state.expandedDevice = (state.expandedDevice === id) ? null : id;
-        renderFilters();
-        renderTable();
-        renderMarkers();          // highlight on the map, without moving there
+        selectDevice($(this).attr('data-device'));
     });
 
     $root.on('click', '[data-locate]', function (event) {
         event.stopPropagation();          // do not also toggle the detail row
 
-        var marker = state.markers[$(this).attr('data-locate')];
+        var id = String($(this).attr('data-locate'));
+        var marker = state.markers[id];
         var map = get_map(mapId);
         if (! marker || ! map) { return; }
 
         map.setView(marker.getLatLng(), Math.max(map.getZoom(), 11), { animate: true });
 
         if (state.cluster && state.cluster.zoomToShowLayer) {
-            state.cluster.zoomToShowLayer(marker, function () { marker.openPopup(); });
-        } else {
-            marker.openPopup();
+            state.cluster.zoomToShowLayer(marker, function () {});
+        }
+
+        // Markers carry no popup any more, so show the panel explicitly.
+        if (! state.detail || state.detail.type !== 'device' || state.detail.id !== id) {
+            selectDevice(id);
         }
     });
 
