@@ -81,7 +81,6 @@
         <div class="wxrisk-stripwrap">
             <div class="wxrisk-strip" data-role="warning-cards"></div>
         </div>
-        <div class="wxrisk-wdetail wx-hidden" data-role="warning-detail"></div>
     </div>
 
     {{-- ------------------------------------------------------------- map --}}
@@ -112,6 +111,11 @@
             </div>
             <div class="wxrisk-legend-hint">{{ __('weather-risk-map::widget.legend_hint') }}</div>
         </div>
+
+        {{-- Warning detail floats OVER the map. In the layout flow it stole
+             height from the map pane (flex:1), which read as the map
+             "minimising" every time a warning was selected. --}}
+        <div class="wxrisk-wdetail wx-hidden" data-role="warning-detail"></div>
 
         <div class="wxrisk-overlay" data-role="overlay">
             <span data-role="overlay-text">{{ __('weather-risk-map::widget.loading') }}</span>
@@ -398,11 +402,23 @@ html.dark .wxrisk-widget .wxrisk-when.is-now { color: #1a1a1a; }
 .wxrisk-widget .wxrisk-nowarn { font-size: 12.5px; color: var(--wx-muted); padding: 2px 0; }
 
 .wxrisk-widget .wxrisk-wdetail {
-    margin-top: 6px; padding: 8px 10px;
-    background: var(--wx-surface);
-    border: 1px solid var(--wx-border); border-radius: 3px;
-    max-height: 190px; overflow-y: auto;
+    position: absolute; left: 8px; bottom: 8px; z-index: 460;
+    width: 340px; max-width: calc(100% - 16px);
+    max-height: 64%; overflow-y: auto;
+    padding: 8px 10px 10px;
+    background: var(--wx-panel); color: var(--wx-panel-fg);
+    border: 1px solid var(--wx-border);
+    border-left: 4px solid currentColor;
+    border-radius: 3px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.4);
 }
+.wxrisk-widget .wxrisk-wdetail-close {
+    position: absolute; top: 4px; right: 6px;
+    background: none; border: 0; cursor: pointer; padding: 2px 5px;
+    font-size: 17px; line-height: 1; color: var(--wx-muted); font-family: inherit;
+}
+.wxrisk-widget .wxrisk-wdetail-close:hover { color: var(--wx-severe); }
+.wxrisk-widget .wxrisk-wdetail .wxrisk-popup h4 { padding-right: 20px; }
 .wxrisk-widget .wxrisk-wdetail .wxrisk-popup { max-width: none; min-width: 0; }
 .wxrisk-widget .wxrisk-wdetail .wxrisk-popup .wxrisk-scroll { max-height: none; overflow: visible; }
 .wxrisk-widget .wxrisk-wdetail .wxrisk-kv { max-width: 340px; }
@@ -1024,6 +1040,13 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     function selectWarning(warningId) {
         state.selectedWarning = (state.selectedWarning === warningId) ? null : warningId;
 
+        // Both are bottom-left overlays; showing one hides the other.
+        if (state.selectedWarning && state.showLegend) {
+            state.showLegend = false;
+            $root.find('[data-role="legend"]').addClass('wx-hidden');
+            $root.find('[data-action="toggle-legend"]').attr('aria-pressed', 'false');
+        }
+
         // Restyle the existing layers rather than rebuilding them: the click
         // that got us here is still being handled by one of them.
         applyWarningEmphasis();
@@ -1041,13 +1064,17 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         var locatable = (warning.polygons || []).length > 0;
 
-        $panel.removeClass('wx-hidden').html(
-            warningPopup(warning)
-            + (locatable
-                ? '<button type="button" class="wxrisk-linkbtn" data-locate-warning="'
-                  + esc(warning.id) + '">' + esc(t('show_on_map')) + '</button>'
-                : '<span class="wxrisk-muted">' + esc(t('no_geometry')) + '</span>')
-        );
+        $panel.removeClass('wx-hidden')
+            .css('color', levelMeta(warning.risk).color)      // drives border-left
+            .html(
+                '<button type="button" class="wxrisk-wdetail-close" data-role="close-detail" '
+                + 'aria-label="' + esc(t('clear_selection')) + '">&times;</button>'
+                + warningPopup(warning)
+                + (locatable
+                    ? '<button type="button" class="wxrisk-linkbtn" data-locate-warning="'
+                      + esc(warning.id) + '">' + esc(t('show_on_map')) + '</button>'
+                    : '<span class="wxrisk-muted">' + esc(t('no_geometry')) + '</span>')
+            );
     }
 
     /**
@@ -1600,8 +1627,10 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                     { sticky: true, direction: 'top', className: 'wxrisk-wtip', opacity: 1 }
                 );
 
-                // autoPan off: opening a popup must not move the map either.
-                polygon.bindPopup(warningPopup(warning), { maxWidth: 320, autoPan: false });
+                // Deliberately NO bindPopup here. The click selects the
+                // warning and its text appears in the detail panel; a Leaflet
+                // popup as well meant the same information opened twice, in two
+                // places, from one click.
 
                 polygon.on('mouseover', function () {
                     if (state.selectedWarning !== null && state.selectedWarning !== warning.id) { return; }
@@ -1954,6 +1983,13 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         // Warnings published without geometry are selectable too: there is
         // nothing to fly to, but their text is still worth reading.
         selectWarning($(this).attr('data-warning'));
+    });
+
+    $root.on('click', '[data-role="close-detail"]', function (event) {
+        event.stopPropagation();
+        state.selectedWarning = null;
+        applyWarningEmphasis();
+        render({ rebuildPolygons: false });
     });
 
     $root.on('click', '[data-locate-warning]', function (event) {
