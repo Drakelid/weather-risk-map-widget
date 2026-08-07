@@ -1,8 +1,35 @@
 {
-    "name": "librenms/weather-risk-map-widget",
-    "description": "Weather Risk Map dashboard widget for LibreNMS - correlates device GPS coordinates with forecasts and official severe-weather warnings",
+    "name": "drakelid/librenms-weather-risk-map-widget",
+    "description": "Weather Risk Map dashboard widget for LibreNMS - correlates device GPS coordinates with forecasts and official severe-weather warnings from MET Norway",
     "type": "library",
     "license": "GPL-3.0-or-later",
+    "keywords": [
+        "librenms",
+        "weather",
+        "noc",
+        "monitoring",
+        "dashboard",
+        "widget",
+        "met-norway",
+        "risk",
+        "isp",
+        "network",
+        "leaflet"
+    ],
+    "homepage": "https://github.com/Drakelid/weather-risk-map-widget",
+    "authors": [
+        {
+            "name": "Drakelid",
+            "email": "ex_410156@hkraft.no",
+            "homepage": "https://github.com/Drakelid",
+            "role": "Developer"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/Drakelid/weather-risk-map-widget/issues",
+        "source": "https://github.com/Drakelid/weather-risk-map-widget",
+        "docs": "https://github.com/Drakelid/weather-risk-map-widget/blob/main/README.md"
+    },
     "require": {
         "php": "^8.2",
         "ext-json": "*",

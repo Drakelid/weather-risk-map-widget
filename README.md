@@ -56,7 +56,7 @@ php scripts/composer_wrapper.php config repositories.weather-risk-map '{"type":"
 ```
 
 ```sh
-./lnms plugin:add librenms/weather-risk-map-widget @dev
+./lnms plugin:add drakelid/librenms-weather-risk-map-widget @dev
 ```
 
 ```sh
@@ -88,6 +88,9 @@ Add it to a dashboard: **Overview → edit (pencil) → Add Widget → Weather R
 > **A LibreNMS core update will uninstall this plugin.** `daily.sh` runs `git checkout -- composer.json composer.lock`, which destroys the path repository above. See [§5](#5-installation) before putting this into production — it is not optional operational trivia, the widget silently disappears.
 
 Full details in [§5 Installation](#5-installation).
+
+> [!TIP]
+> Deploying to a live LibreNMS server? Follow **[docs/PRODUCTION-INSTALL.md](docs/PRODUCTION-INSTALL.md)** instead — a step-by-step guide including backups, verification, the persistence guard and a rollback procedure.
 
 ---
 
@@ -228,7 +231,7 @@ php scripts/composer_wrapper.php config repositories.weather-risk-map '{"type":"
 ```
 
 ```sh
-./lnms plugin:add librenms/weather-risk-map-widget @dev
+./lnms plugin:add drakelid/librenms-weather-risk-map-widget @dev
 ```
 
 ```sh
@@ -278,7 +281,7 @@ The same pass runs `--update-no-dev`, which strips LibreNMS's dev dependencies. 
 
 Three ways to handle it:
 
-**1. Publish the package (the real fix).** If `librenms/weather-risk-map-widget` resolves from Packagist, `daily.sh`'s `composer require` works untouched and no repository entry is needed anywhere. A path repository is a development arrangement; this is what LibreNMS's plugin system expects.
+**1. Publish the package (the real fix).** If `drakelid/librenms-weather-risk-map-widget` resolves from Packagist, `daily.sh`'s `composer require` works untouched and no repository entry is needed anywhere. A path repository is a development arrangement; this is what LibreNMS's plugin system expects.
 
 **2. Re-apply automatically.** Idempotent, so it is safe hourly regardless of when `daily.sh` runs:
 
@@ -286,9 +289,9 @@ Three ways to handle it:
 sudo tee /usr/local/bin/wxrisk-ensure >/dev/null <<'EOF'
 #!/bin/sh
 cd /opt/librenms || exit 1
-[ -d vendor/librenms/weather-risk-map-widget ] && exit 0
+[ -d vendor/drakelid/librenms-weather-risk-map-widget ] && exit 0
 php scripts/composer_wrapper.php config repositories.weather-risk-map   '{"type":"path","url":"../weather-risk-map-widget","options":{"symlink":true}}'
-./lnms plugin:add librenms/weather-risk-map-widget @dev
+./lnms plugin:add drakelid/librenms-weather-risk-map-widget @dev
 php artisan optimize:clear
 EOF
 sudo chmod +x /usr/local/bin/wxrisk-ensure
