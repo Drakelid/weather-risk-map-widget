@@ -37,13 +37,29 @@ It reads the GPS coordinates already stored on your LibreNMS devices, correlates
 
 ## 1. Quick start
 
-From the LibreNMS directory, as the `librenms` user:
+> [!IMPORTANT]
+> Run **every** command as the `librenms` user (`sudo su - librenms` first). LibreNMS refuses artisan as anyone else, and running it as root or your own account leaves cache files the web server cannot write — which surfaces later as an unrelated-looking 500.
+>
+> There is usually **no `composer` on PATH**. Use LibreNMS's own wrapper: `php scripts/composer_wrapper.php …`
+
+First get the package onto the server, beside the LibreNMS directory:
 
 ```sh
-composer config repositories.weather-risk-map \
-  '{"type":"path","url":"../weather-risk-map-widget","options":{"symlink":true}}'
+# /opt/librenms + /opt/weather-risk-map-widget
+sudo chown -R librenms:librenms /opt/weather-risk-map-widget
+```
 
+Then, as `librenms`, from `/opt/librenms`:
+
+```sh
+php scripts/composer_wrapper.php config repositories.weather-risk-map '{"type":"path","url":"../weather-risk-map-widget","options":{"symlink":true}}'
+```
+
+```sh
 ./lnms plugin:add librenms/weather-risk-map-widget @dev
+```
+
+```sh
 php artisan vendor:publish --tag=weather-risk-map-config
 ```
 
@@ -56,7 +72,10 @@ WEATHER_RISK_MAP_USER_AGENT="YourISP-LibreNMS/1.0 noc@yourisp.no"
 Then clear caches and verify:
 
 ```sh
-php artisan config:clear && php artisan route:clear && php artisan view:clear
+php artisan optimize:clear
+```
+
+```sh
 php artisan weather-risk-map:diagnose
 ```
 
@@ -64,6 +83,9 @@ Add it to a dashboard: **Overview → edit (pencil) → Add Widget → Weather R
 
 > [!IMPORTANT]
 > The `.env` line is not optional. MET Norway answers **403** to any request whose `User-Agent` lacks a real contact email. `weather-risk-map:diagnose` fails loudly while the shipped placeholder is still in place.
+
+> [!CAUTION]
+> **A LibreNMS core update will uninstall this plugin.** `daily.sh` runs `git checkout -- composer.json composer.lock`, which destroys the path repository above. See [§5](#5-installation) before putting this into production — it is not optional operational trivia, the widget silently disappears.
 
 Full details in [§5 Installation](#5-installation).
 
@@ -178,54 +200,125 @@ Lightning is modelled as **risk** from thunder indications in the forecast — `
 
 Leaflet and Leaflet.markercluster are **already bundled with LibreNMS** (`html/js/leaflet.js`, `html/js/leaflet.markercluster.js`), and the widget reuses core's `init_map()` / `get_map()` / `destroy_map()` helpers. There are no JavaScript dependencies and no asset build step.
 
+### Prerequisites that are easy to get wrong
+
+| | |
+| --- | --- |
+| **User** | Every `artisan` / `lnms` / `composer` command runs as `librenms`. Start with `sudo su - librenms`. |
+| **Composer** | Usually not on PATH. Use `php /opt/librenms/scripts/composer_wrapper.php` (it downloads `composer.phar` if the system has no Composer). |
+| **Location** | The package must exist on the server. `../weather-risk-map-widget` resolves relative to the LibreNMS directory, i.e. `/opt/weather-risk-map-widget`. |
+| **Ownership** | `sudo chown -R librenms:librenms /opt/weather-risk-map-widget`, or git refuses with *"detected dubious ownership"* and pulls silently fail. |
+
 ### Steps
 
 ```sh
-# 1. Register this directory as a Composer path repository
-composer config repositories.weather-risk-map \
-  '{"type":"path","url":"../weather-risk-map-widget","options":{"symlink":true}}'
+sudo chown -R librenms:librenms /opt/weather-risk-map-widget
+```
 
-# 2. Install the package
+```sh
+sudo su - librenms
+```
+
+```sh
+cd /opt/librenms
+```
+
+```sh
+php scripts/composer_wrapper.php config repositories.weather-risk-map '{"type":"path","url":"../weather-risk-map-widget","options":{"symlink":true}}'
+```
+
+```sh
 ./lnms plugin:add librenms/weather-risk-map-widget @dev
+```
 
-# 3. Publish the config so it survives package updates
+```sh
 php artisan vendor:publish --tag=weather-risk-map-config
 ```
 
-**4. Set the contact email** — required, see the note in [§1](#1-quick-start):
+**Set the contact email** — required, see [§1](#1-quick-start):
 
 ```dotenv
-# .env
+# /opt/librenms/.env
 WEATHER_RISK_MAP_USER_AGENT="YourISP-LibreNMS/1.0 noc@yourisp.no"
 ```
 
 ```sh
-# 5. Clear caches
-php artisan config:clear
-php artisan route:clear
-php artisan view:clear
-php artisan cache:clear
+php artisan optimize:clear
+```
 
-# 6. Verify end to end
+```sh
 php artisan weather-risk-map:diagnose
 ```
 
 Then: **Overview → dashboard → edit (pencil) → Add Widget → Weather Risk Map**.
 
+Verify the route registered — this is the single best health check, because a missing route renders as core's generic *"Problem with backend"*:
+
+```sh
+php artisan route:list --path=ajax/dash | grep weather
+```
+
+### Surviving a LibreNMS core update
+
+> [!CAUTION]
+> Installed this way, the plugin **will be removed by the next nightly update**.
+
+`daily.sh` does the following, in order:
+
+```sh
+git checkout --quiet -- composer.json composer.lock          # line 291
+PLUGINS=$(call_daily_php "composer_get_plugins")             # line 352
+FORCE=1 ${COMPOSER} require --update-no-dev --no-install $PLUGINS
+${COMPOSER} install --no-dev
+```
+
+`composer.json` is tracked in LibreNMS's git, so the checkout destroys the path repository. LibreNMS then re-requires the plugin **by name** from `composer.plugins.json` — but `composer_get_plugins` in `daily.php` reads only the `require` block and ignores any `repositories` you add there. With no repository, the package cannot resolve and is dropped.
+
+The same pass runs `--update-no-dev`, which strips LibreNMS's dev dependencies. That removes PHPUnit and breaks the `flare` log driver in the default logging stack, so subsequent errors are not written to `laravel.log` at all — which makes the failure considerably harder to diagnose than it should be.
+
+Three ways to handle it:
+
+**1. Publish the package (the real fix).** If `librenms/weather-risk-map-widget` resolves from Packagist, `daily.sh`'s `composer require` works untouched and no repository entry is needed anywhere. A path repository is a development arrangement; this is what LibreNMS's plugin system expects.
+
+**2. Re-apply automatically.** Idempotent, so it is safe hourly regardless of when `daily.sh` runs:
+
+```sh
+sudo tee /usr/local/bin/wxrisk-ensure >/dev/null <<'EOF'
+#!/bin/sh
+cd /opt/librenms || exit 1
+[ -d vendor/librenms/weather-risk-map-widget ] && exit 0
+php scripts/composer_wrapper.php config repositories.weather-risk-map   '{"type":"path","url":"../weather-risk-map-widget","options":{"symlink":true}}'
+./lnms plugin:add librenms/weather-risk-map-widget @dev
+php artisan optimize:clear
+EOF
+sudo chmod +x /usr/local/bin/wxrisk-ensure
+sudo crontab -u librenms -l | { cat; echo "7 * * * * /usr/local/bin/wxrisk-ensure >/dev/null 2>&1"; } | sudo crontab -u librenms -
+```
+
+**3. Disable automatic updates** — arguably correct for a NOC system anyway:
+
+```php
+$config['update'] = 0;
+```
+
+> [!NOTE]
+> Defining the repository in Composer's **global** config does *not* work. Composer documents only *disabling* a repository globally; there is no supported way to define one that applies to another project. This was tested and failed.
+
 ### Notes
 
-- If your installation caches config or routes, re-run `php artisan config:cache` / `route:cache` after step 5.
+- If your installation caches config or routes, re-run `php artisan config:cache` / `route:cache` after clearing.
 - No service restart is needed beyond the cache clears — unless you run OPcache with `validate_timestamps=0`, in which case reload PHP-FPM:
   ```sh
   sudo systemctl reload php8.2-fpm    # match your PHP version
   ```
+- After a `git pull` in the package directory, run `php artisan view:clear` (or `optimize:clear`) and **hard-refresh the browser**. The widget's CSS and JavaScript are inlined into the Blade output, so a cached page keeps running the old script.
 
 ### Optional: pre-warm the cache
 
 Worth it only for a permanently displayed NOC dashboard. Deliberately **not** scheduled by default, so an installation that never opens the widget generates no API traffic:
 
 ```sh
-# crontab, as the librenms user — match --radius to your widget setting
+# crontab, as the librenms user - match --radius to your widget setting
 */10 * * * * /usr/bin/php /opt/librenms/artisan weather-risk-map:warm --radius=10 --quiet-success
 ```
 
@@ -353,14 +446,30 @@ Icing is derived from the physical precondition — precipitation while air temp
 
 ### Automated
 
+The package keeps its own `vendor/`, so the suite is unaffected when a
+LibreNMS update strips core's dev dependencies:
+
 ```sh
-cd weather-risk-map-widget
-composer install
-composer test     # or: vendor/bin/phpunit --testsuite unit
-composer lint     # Pint style check
+cd /opt/weather-risk-map-widget
 ```
 
-The unit suite is pure — no database, no Laravel application, no network.
+```sh
+php /opt/librenms/composer.phar install
+```
+
+```sh
+vendor/bin/phpunit --testsuite unit
+```
+
+Expected: **`OK (110 tests, 264 assertions)`**.
+
+The suite is pure — no database, no Laravel application, no network — so it runs
+anywhere PHP 8.2+ is available. `vendor/bin/pint --test` checks style.
+
+> [!NOTE]
+> `composer` is usually not on PATH on a LibreNMS host, and
+> `scripts/composer_wrapper.php` always `chdir`s to `/opt/librenms`, so it cannot
+> be used for this package. Invoke `composer.phar` directly as above.
 
 <details>
 <summary><strong>Coverage against the specification's test matrix</strong></summary>
@@ -418,7 +527,13 @@ Logs go to `storage/logs/weather-risk-map.log` — a separate channel, so weathe
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| **"Problem with backend"** in the widget tile | Core's generic AJAX failure. Usually the package is not installed, so the route 404s | `php artisan route:list --path=ajax/dash \| grep weather`. If absent, reinstall — see [§5](#5-installation) |
+| Widget vanished after a LibreNMS update | `daily.sh` reverted `composer.json` and dropped the plugin | Reinstall, then apply one of the three mitigations in [§5](#5-installation) |
 | Widget missing from **Add Widget** | Route not registered | `php artisan route:clear`, then `php artisan route:list --path=ajax/dash` — `weather-risk-map` must appear |
+| Errors appear nowhere in `laravel.log` | The default log stack references a `flare` driver removed by `--update-no-dev` | Set `LOG_CHANNEL=single` in `.env`, then `php artisan config:clear` |
+| *"artisan must be run as the user librenms"* | Ran as root or your own account | `sudo su - librenms` first. If caches were already written with wrong ownership: `sudo chown -R librenms:librenms /opt/librenms/storage /opt/librenms/bootstrap/cache` |
+| *"detected dubious ownership"* on `git pull` | Package directory not owned by the invoking user | `sudo chown -R librenms:librenms /opt/weather-risk-map-widget` |
+| Blade parse error after editing the view | A doubled opening brace anywhere in the file — including inside a JavaScript comment — is compiled as a PHP echo | Never write JSDoc brace-type annotations in `.blade.php`. Check with `php artisan view:cache` |
 | *"No devices with valid GPS coordinates"* | No lat/lng on locations | Run `weather-risk-map:diagnose`; set coordinates or enable LibreNMS geolocation lookup |
 | `403` from MET Norway | Placeholder User-Agent, or >4-decimal coordinates | Set `WEATHER_RISK_MAP_USER_AGENT` to include a real contact email |
 | `429` from a provider | Too many cells, TTL too short | Increase the widget's radius, raise `forecast_ttl`, or lower `max_cells_per_refresh` |
@@ -536,7 +651,7 @@ No migrations, no new tables, no new columns. Widget settings use LibreNMS's exi
 7. **The per-refresh cell budget** means a pathological inventory (thousands of distinct sites at 1 km radius) will show some devices from cached rather than current data. The footer reports cell count, so this is visible.
 8. **Sensitivity is a flat offset table**, not a rules engine — by design for v1. `SensitivityProfileService::adjust()` is the seam where a richer engine slots in.
 9. **Cluster "worst member" derives from `zIndexOffset`.** Compact, but it couples two concerns; a dedicated marker option would be cleaner if the marker code grows.
-10. **The test suite has not been executed** — see [§14](#14-verification-status).
+10. **A LibreNMS core update uninstalls the plugin** unless mitigated — `daily.sh` reverts `composer.json`, destroying the path repository. See [§5](#5-installation). Publishing to a Composer repository is the only fix that needs no ongoing maintenance.
 
 ---
 
@@ -558,20 +673,22 @@ The architecture was chosen so none of these require a rewrite:
 
 ## 14. Verification status
 
-> [!CAUTION]
-> The authoring environment had **no PHP runtime, no Composer, no Docker and no WSL**. The following were **not executed** and are unverified by running:
-> - `php -l` syntax checks
-> - the PHPUnit suite
-> - Blade compilation
-> - `./validate.php`
+**The unit suite has been run on the target host and passes:**
 
-What *was* done instead:
+```
+PHPUnit 11.5.56    Runtime: PHP 8.4.24
+OK (110 tests, 264 assertions)
+```
 
-- Every core API this package depends on was **read directly from the LibreNMS checkout** rather than assumed — `DashboardController::listWidgets()`, `WidgetController`, the `Device` / `Location` / `DeviceGroup` models, `scopeInDeviceGroup`, `scopeHasAccess`, `init_map()`, `widget_settings()`.
+The widget is confirmed rendering in a live LibreNMS dashboard.
+
+What was authored without a local runtime, and is therefore covered only by the run above plus manual checking:
+
+- The package was written on a machine with no PHP, Composer, Docker or WSL, so nothing was executed during development.
+- Every core API it depends on was **read directly from the LibreNMS checkout** rather than assumed — `DashboardController::listWidgets()`, `WidgetController`, the `Device` / `Location` / `DeviceGroup` models, `scopeInDeviceGroup`, `scopeHasAccess`, `init_map()`, `widget_settings()`, and `daily.sh`'s update sequence.
 - The MET Norway contracts were **verified against the live API documentation**, not recalled from memory.
-- A structural parser checked all PHP files for balanced delimiters, open tags and stray non-ASCII — clean. That catches syntax damage, not type errors.
 
-**Please run [§9](#9-testing) on the LibreNMS host before putting this in front of a NOC**, and treat the first `weather-risk-map:diagnose` as the real acceptance test.
+Still not exercised: [§9](#9-testing)'s manual NOC checks — provider failure and cached fallback, timeout, rate limiting, and the light/dark and clustering passes. Run those before relying on the widget operationally.
 
 ---
 
