@@ -653,6 +653,9 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         positioned: false,
         lastBoundsKey: null,
         loading: false,
+        reloadPending: false,
+        request: null,
+        destroyed: false,
         palette: null,
         themeObserver: null,
         sizeObserver: null,
@@ -858,6 +861,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         state.hazardFilter = {};
         state.selectedWarning = null;
         state.expandedDevice = null;
+        state.detail = null;
         applyWarningEmphasis();
         render();
     }
@@ -1047,6 +1051,9 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     function selectWarning(warningId) {
         state.selectedWarning = (state.selectedWarning === warningId) ? null : warningId;
+        // Warning and device are two presentations of the same detail panel;
+        // retaining both selections creates a hidden filter that looks stuck.
+        state.expandedDevice = null;
         state.detail = state.selectedWarning ? { type: 'warning', id: state.selectedWarning } : null;
 
         if (state.detail) { hideLegend(); }
@@ -1054,7 +1061,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         // Restyle the existing layers rather than rebuilding them: the click
         // that got us here is still being handled by one of them.
         applyWarningEmphasis();
-        render({ rebuildPolygons: false });
+        render({ rebuildPolygons: false, rebuildMarkers: false });
     }
 
     /**
@@ -1065,11 +1072,17 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
      */
     function selectDevice(deviceId) {
         var id = String(deviceId);
+        state.selectedWarning = null;
         state.expandedDevice = (state.expandedDevice === id) ? null : id;
         state.detail = state.expandedDevice ? { type: 'device', id: state.expandedDevice } : null;
 
         if (state.detail) { hideLegend(); }
-        render({ rebuildPolygons: false });
+        applyWarningEmphasis();
+        // Do not remove and recreate the marker that is currently dispatching
+        // this click. MarkerCluster can still be finishing its own click/zoom
+        // handling; clearing the group here leaves it with a detached layer
+        // and subsequent device clicks can appear to do nothing.
+        render({ rebuildPolygons: false, rebuildMarkers: false });
     }
 
     function closeDetail() {
@@ -1081,7 +1094,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             state.expandedDevice = null;
         }
         state.detail = null;
-        render({ rebuildPolygons: false });
+        render({ rebuildPolygons: false, rebuildMarkers: false });
     }
 
     function renderDetail() {
@@ -1334,7 +1347,12 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             var w = warningById(state.selectedWarning);
             $bar.append(pill(
                 tr('filter_warning', { name: w ? (w.event_name || w.title) : state.selectedWarning }),
-                function () { state.selectedWarning = null; applyWarningEmphasis(); render({ rebuildPolygons: false }); }
+                function () {
+                    state.selectedWarning = null;
+                    if (state.detail && state.detail.type === 'warning') { state.detail = null; }
+                    applyWarningEmphasis();
+                    render({ rebuildPolygons: false, rebuildMarkers: false });
+                }
             ));
         }
 
@@ -1342,7 +1360,11 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             var d = deviceById(state.expandedDevice);
             $bar.append(pill(
                 tr('filter_device', { name: d ? d.display_name : state.expandedDevice }),
-                function () { state.expandedDevice = null; render({ rebuildPolygons: false }); }
+                function () {
+                    state.expandedDevice = null;
+                    if (state.detail && state.detail.type === 'device') { state.detail = null; }
+                    render({ rebuildPolygons: false, rebuildMarkers: false });
+                }
             ));
         }
 
@@ -1700,33 +1722,8 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
         var highlit = state.selectedWarning ? affectedDeviceIds(state.selectedWarning) : [];
         var devices = visibleDevices();
-        state.markers = {};
 
-        var markers = devices.map(function (device) {
-            var isHighlit = highlit.indexOf(device.device_id) !== -1;
-            var isSelected = state.expandedDevice === String(device.device_id);
-
-            var marker = L.marker([device.lat, device.lng], {
-                icon: deviceIcon(device, isHighlit, isSelected),
-                title: device.display_name,
-                zIndexOffset: isSelected ? 100000 : effectiveRisk(device) * 1000,
-                // Carried explicitly rather than derived from zIndexOffset: the
-                // cluster icon needs the real risk, and overloading the z-index
-                // for selection would otherwise corrupt its colour.
-                wxRisk: effectiveRisk(device),
-                wxSelected: isSelected
-            });
-            // No bindPopup: a Leaflet popup here would be a second card
-            // showing what the detail panel already shows, and it would cover
-            // the map. Everything clicked reports into the one panel.
-            marker.on('click', function () { selectDevice(device.device_id); });
-            state.markers[device.device_id] = marker;
-            return marker;
-        });
-
-        if (state.cluster) {
-            state.cluster.clearLayers();
-        } else if (state.payload.settings.clustering && L.markerClusterGroup) {
+        if (! state.cluster && state.payload.settings.clustering && L.markerClusterGroup) {
             state.cluster = L.markerClusterGroup({
                 maxClusterRadius: 45,
                 // The cluster takes the colour of its WORST device, so a single
@@ -1757,10 +1754,77 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
             state.cluster = L.layerGroup().addTo(map);
         }
 
+        // Reconcile by id instead of clearing the whole cluster. Clearing it
+        // during a cluster animation or pointer event is the main source of
+        // Leaflet ending up with stale internal layers.
+        var previous = state.markers;
+        var next = {};
+        var additions = [];
+
+        devices.forEach(function (device) {
+            var id = String(device.device_id);
+            var isHighlit = highlit.indexOf(device.device_id) !== -1;
+            var isSelected = state.expandedDevice === id;
+            var marker = previous[id];
+
+            if (! marker) {
+                marker = L.marker([device.lat, device.lng], {
+                    title: device.display_name,
+                    // Carried explicitly rather than derived from zIndexOffset:
+                    // cluster colour must continue to use the real risk.
+                    wxRisk: effectiveRisk(device),
+                    wxSelected: isSelected
+                });
+                marker.on('click', function () { selectDevice(device.device_id); });
+                additions.push(marker);
+            } else {
+                var current = marker.getLatLng();
+                if (current.lat !== device.lat || current.lng !== device.lng) {
+                    marker.setLatLng([device.lat, device.lng]);
+                }
+            }
+
+            marker.options.title = device.display_name;
+            marker.options.wxRisk = effectiveRisk(device);
+            marker.options.wxSelected = isSelected;
+            marker.setIcon(deviceIcon(device, isHighlit, isSelected));
+            marker.setZIndexOffset(isSelected ? 100000 : effectiveRisk(device) * 1000);
+            next[id] = marker;
+        });
+
+        Object.keys(previous).forEach(function (id) {
+            if (! next[id]) { state.cluster.removeLayer(previous[id]); }
+        });
+
+        state.markers = next;
         if (state.cluster.addLayers) {
-            state.cluster.addLayers(markers);
+            state.cluster.addLayers(additions);
         } else {
-            markers.forEach(function (m) { state.cluster.addLayer(m); });
+            additions.forEach(function (marker) { state.cluster.addLayer(marker); });
+        }
+        if (state.cluster.refreshClusters) {
+            state.cluster.refreshClusters();
+        }
+    }
+
+    /** Repaint selection/warning emphasis without replacing live Leaflet layers. */
+    function updateMarkerEmphasis() {
+        var highlit = state.selectedWarning ? affectedDeviceIds(state.selectedWarning) : [];
+
+        Object.keys(state.markers).forEach(function (id) {
+            var marker = state.markers[id];
+            var device = deviceById(id);
+            if (! marker || ! device) { return; }
+
+            var selected = state.expandedDevice === String(id);
+            marker.options.wxSelected = selected;
+            marker.setIcon(deviceIcon(device, highlit.indexOf(device.device_id) !== -1, selected));
+            marker.setZIndexOffset(selected ? 100000 : effectiveRisk(device) * 1000);
+        });
+
+        // Cluster icons cache whether they contain the selected marker.
+        if (state.cluster && state.cluster.refreshClusters) {
+            state.cluster.refreshClusters();
         }
     }
 
@@ -1778,6 +1842,10 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
      * permission a read-only NOC account will not have.
      */
     var VIEW_KEY = 'wxrisk.view.' + widgetId;
+    // Keep enough regional context for a weather-risk view. Device coordinates
+    // are precise, but street-level zoom does not add useful weather context.
+    var DEVICE_FOCUS_ZOOM = 9;
+    var DEVICE_FIT_MAX_ZOOM = 10;
 
     function storedView() {
         try {
@@ -1828,11 +1896,14 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         var map = get_map(mapId);
         if (! map || ! state.payload || ! state.payload.bounds) { return; }
 
+        if (map.stop) { map.stop(); }
         var b = state.payload.bounds;
         if (b.south === b.north && b.west === b.east) {
-            map.setView([b.south, b.west], 11);       // single device
+            map.setView([b.south, b.west], DEVICE_FOCUS_ZOOM);
         } else {
-            map.fitBounds([[b.south, b.west], [b.north, b.east]], { padding: [25, 25], maxZoom: 12 });
+            map.fitBounds([[b.south, b.west], [b.north, b.east]], {
+                padding: [25, 25], maxZoom: DEVICE_FIT_MAX_ZOOM
+            });
         }
     }
 
@@ -1840,6 +1911,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         var map = get_map(mapId);
         var bounds = warningBounds(null);
         if (map && bounds && bounds.isValid()) {
+            if (map.stop) { map.stop(); }
             map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });
         }
     }
@@ -1851,6 +1923,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
     /*
      * options.rebuildPolygons - recreate the warning layers
+     * options.rebuildMarkers  - recreate markers when their membership changed
      * options.fit             - allow auto-fit to move the view
      *
      * Polygons are only rebuilt when something actually changed which warnings
@@ -1865,7 +1938,8 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
      */
     function renderMap(options) {
         if (options.rebuildPolygons) { renderPolygons(); }
-        renderMarkers();
+        if (options.rebuildMarkers) { renderMarkers(); }
+        else { updateMarkerEmphasis(); }
 
         if (! state.positioned) {
             state.positioned = true;
@@ -1924,7 +1998,20 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     function render(options) {
         // Safe defaults: correct visuals, no map movement. Only the data load
         // asks to re-fit.
-        options = $.extend({ rebuildPolygons: true, fit: false }, options || {});
+        options = $.extend({ rebuildPolygons: true, rebuildMarkers: true, fit: false }, options || {});
+
+        // A filter can hide the object currently occupying the detail panel.
+        // Clear that selection instead of leaving an invisible active state.
+        if (state.selectedWarning && ! visibleWarnings().some(function (w) { return w.id === state.selectedWarning; })) {
+            state.selectedWarning = null;
+            if (state.detail && state.detail.type === 'warning') { state.detail = null; }
+        }
+        if (state.expandedDevice && ! visibleDevices().some(function (d) {
+            return String(d.device_id) === state.expandedDevice;
+        })) {
+            state.expandedDevice = null;
+            if (state.detail && state.detail.type === 'device') { state.detail = null; }
+        }
 
         refreshPalette();
         renderSummary();
@@ -1943,21 +2030,30 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
     }
 
     function load() {
-        if (state.loading) { return; }
+        if (state.destroyed) { return; }
+        if (state.loading) {
+            state.reloadPending = true;
+            return;
+        }
         state.loading = true;
+        state.reloadPending = false;
         $root.addClass('is-loading');
 
-        $.ajax({
+        state.request = $.ajax({
             type: 'POST',
             url: dataUrl,
             dataType: 'json',
+            timeout: 30000,
             data: { id: widgetId, _token: csrfToken },
             success: function (data) {
+                if (state.destroyed) { return; }
                 state.loading = false;
+                state.request = null;
                 $root.removeClass('is-loading');
 
                 if (! data || data.status !== 'ok') {
                     overlay((data && data.message) || t('error_generic'));
+                    if (state.reloadPending) { load(); }
                     return;
                 }
 
@@ -1978,13 +2074,17 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
 
                 state.payload = data;
                 render({ rebuildPolygons: true, fit: true });
+                if (state.reloadPending) { load(); }
             },
             error: function (xhr) {
+                if (state.destroyed) { return; }
                 state.loading = false;
+                state.request = null;
                 $root.removeClass('is-loading');
                 overlay(xhr && xhr.status === 429
                     ? 'Too many refreshes - please wait a moment.'
                     : t('error_generic'));
+                if (state.reloadPending) { load(); }
             }
         });
     }
@@ -2041,6 +2141,7 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         var map = get_map(mapId);
         var bounds = warningBounds($(this).attr('data-locate-warning'));
         if (map && bounds && bounds.isValid()) {
+            if (map.stop) { map.stop(); }
             map.fitBounds(bounds, { padding: [30, 30], maxZoom: 10 });
         }
     });
@@ -2077,11 +2178,11 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
         var map = get_map(mapId);
         if (! marker || ! map) { return; }
 
-        map.setView(marker.getLatLng(), Math.max(map.getZoom(), 11), { animate: true });
-
-        if (state.cluster && state.cluster.zoomToShowLayer) {
-            state.cluster.zoomToShowLayer(marker, function () {});
-        }
+        // One bounded movement is predictable. zoomToShowLayer() can keep
+        // drilling through nested (or co-located) clusters to maxZoom and can
+        // race the setView animation when devices are clicked quickly.
+        if (map.stop) { map.stop(); }
+        map.setView(marker.getLatLng(), DEVICE_FOCUS_ZOOM, { animate: true });
 
         // Markers carry no popup any more, so show the panel explicitly.
         if (! state.detail || state.detail.type !== 'device' || state.detail.id !== id) {
@@ -2215,6 +2316,10 @@ html.dark .wxrisk-popup .wxrisk-muted { color: #b3bcc7; }
                         load();
                     })
                     .on('destroy', function () {
+                        state.destroyed = true;
+                        state.reloadPending = false;
+                        if (state.request && state.request.abort) { state.request.abort(); }
+                        state.request = null;
                         // Both observers outlive this widget's DOM, so they must
                         // be disconnected or they leak on every dashboard edit.
                         if (state.themeObserver) { state.themeObserver.disconnect(); state.themeObserver = null; }
