@@ -119,6 +119,12 @@ final class ArrayCacheStub implements Repository
         return $this->remember($key, null, $callback);
     }
 
+    public function touch($key, $ttl): bool
+    {
+        // This test store ignores TTLs, so only the key's existence matters.
+        return $this->has($key);
+    }
+
     public function forget($key): bool
     {
         unset($this->store[$key]);
